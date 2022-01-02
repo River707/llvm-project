@@ -218,6 +218,11 @@ def OpaqueLoc : Builtin_LocationAttr<"OpaqueLoc"> {
       return reinterpret_cast<T>(
           location.cast<mlir::OpaqueLoc>().getUnderlyingLocation());
     }
+    template <typename T> T getUnderlyingLocation() {
+      assert(getUnderlyingTypeID() == TypeID::get<T>() &&
+             "invalid underlying location type");
+      return reinterpret_cast<T>(getUnderlyingLocation());
+    }
 
     /// Returns a pointer to some data structure that opaque location stores.
     /// Returns nullptr if provided location is not opaque location or if it
