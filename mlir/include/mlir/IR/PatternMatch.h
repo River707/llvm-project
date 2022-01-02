@@ -586,9 +586,11 @@ protected:
 /// A generic PDL pattern constraint function. This function applies a
 /// constraint to a given set of opaque PDLValue entities. The second parameter
 /// is a set of constant value parameters specified in Attribute form. Returns
-/// success if the constraint successfully held, failure otherwise.
+/// success if the constraint successfully held, failure otherwise. Any results
+/// from this constraint that should be passed back to PDL should be added to
+/// the provided result list.
 using PDLConstraintFunction = std::function<LogicalResult(
-    ArrayRef<PDLValue>, ArrayAttr, PatternRewriter &)>;
+    ArrayRef<PDLValue>, ArrayAttr, PatternRewriter &, PDLResultList &)>;
 /// A native PDL rewrite function. This function performs a rewrite on the
 /// given set of values and constant parameters. Any results from this rewrite
 /// that should be passed back to PDL should be added to the provided result
@@ -599,9 +601,11 @@ using PDLRewriteFunction = std::function<void(
 /// A generic PDL pattern constraint function. This function applies a
 /// constraint to a given opaque PDLValue entity. The second parameter is a set
 /// of constant value parameters specified in Attribute form. Returns success if
-/// the constraint successfully held, failure otherwise.
-using PDLSingleEntityConstraintFunction =
-    std::function<LogicalResult(PDLValue, ArrayAttr, PatternRewriter &)>;
+/// the constraint successfully held, failure otherwise. Any results from this
+/// constraint that should be passed back to PDL should be added to the provided
+/// result list.
+using PDLSingleEntityConstraintFunction = std::function<LogicalResult(
+    PDLValue, ArrayAttr, PatternRewriter &, PDLResultList &)>;
 
 /// This class contains all of the necessary data for a set of PDL patterns, or
 /// pattern rewrites specified in the form of the PDL dialect. This PDL module
@@ -629,16 +633,16 @@ public:
                                   PDLConstraintFunction constraintFn);
   /// Register a single entity constraint function.
   template <typename SingleEntityFn>
-  std::enable_if_t<!llvm::is_invocable<SingleEntityFn, ArrayRef<PDLValue>,
-                                       ArrayAttr, PatternRewriter &>::value>
+  std::enable_if_t<std::is_convertible<
+      SingleEntityFn, PDLSingleEntityConstraintFunction>::value>
   registerConstraintFunction(StringRef name, SingleEntityFn &&constraintFn) {
     registerConstraintFunction(
         name, [constraintFn = std::forward<SingleEntityFn>(constraintFn)](
                   ArrayRef<PDLValue> values, ArrayAttr constantParams,
-                  PatternRewriter &rewriter) {
+                  PatternRewriter &rewriter, PDLResultList &results) {
           assert(values.size() == 1 &&
                  "expected values to have a single entity");
-          return constraintFn(values[0], constantParams, rewriter);
+          return constraintFn(values[0], constantParams, rewriter, results);
         });
   }
 

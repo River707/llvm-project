@@ -38,8 +38,8 @@ def PDL_ApplyNativeConstraintOp
   let description = [{
     `pdl.apply_native_constraint` operations apply a native C++ constraint, that
     has been registered externally with the consumer of PDL, to a given set of
-    entities. The constraint is permitted to accept any number of constant
-    valued parameters.
+    entities and optionally return a number of values. The constraint is
+    permitted to accept any number of constant valued parameters.
 
     Example:
 
@@ -48,6 +48,9 @@ def PDL_ApplyNativeConstraintOp
     // `op`. `42`, `"abc"`, and `i32` are constant parameters passed to the
     // constraint.
     pdl.apply_native_constraint "myConstraint"[42, "abc", i32](%input, %attr, %op : !pdl.value, !pdl.attribute, !pdl.operation)
+
+    // Apply `myConstraint` to the `op` and return a value range.
+    pdl.apply_native_constraint "myConstraint"(%op : !pdl.operation) : !pdl.range<value>
     ```
   }];
 
@@ -55,13 +58,16 @@ def PDL_ApplyNativeConstraintOp
                        Variadic<PDL_AnyType>:$args,
                        OptionalAttr<ArrayAttr>:$constParams);
   let assemblyFormat = [{
-    $name ($constParams^)? `(` $args `:` type($args) `)` attr-dict
+    $name ($constParams^)? `(` $args `:` type($args) `)`
+    (`:` type($results)^)? attr-dict
   }];
+  let results = (outs Variadic<PDL_AnyType>:$results);
 
   let builders = [
     OpBuilder<(ins "StringRef":$name, CArg<"ValueRange", "{}">:$args,
                    CArg<"ArrayRef<Attribute>", "{}">:$params), [{
-      build($_builder, $_state, $_builder.getStringAttr(name), args,
+      build($_builder, $_state, TypeRange(), $_builder.getStringAttr(name),
+            args,
             params.empty() ? ArrayAttr() : $_builder.getArrayAttr(params));
     }]>,
   ];

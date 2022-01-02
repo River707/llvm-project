@@ -113,10 +113,9 @@ static void getTreePredicates(std::vector<PositionalPredicate> &predList,
                               Optional<unsigned> ignoreOperand = llvm::None) {
   assert(val.getType().isa<pdl::OperationType>() && "expected operation");
   pdl::OperationOp op = cast<pdl::OperationOp>(val.getDefiningOp());
-  OperationPosition *opPos = cast<OperationPosition>(pos);
 
   // Ensure getDefiningOp returns a non-null operation.
-  if (!opPos->isRoot())
+  if (!pos->isRoot())
     predList.emplace_back(pos, builder.getIsNotNull());
 
   // Check that this is the correct root operation.
@@ -145,10 +144,9 @@ static void getTreePredicates(std::vector<PositionalPredicate> &predList,
 
   // Recurse into any attributes, operands, or results.
   for (auto it : llvm::zip(op.attributeNames(), op.attributes())) {
-    getTreePredicates(
-        predList, std::get<1>(it), builder, inputs,
-        builder.getAttribute(opPos,
-                             std::get<0>(it).cast<StringAttr>().getValue()));
+    getTreePredicates(predList, std::get<1>(it), builder, inputs,
+                      builder.getAttribute(
+                          pos, std::get<0>(it).cast<StringAttr>().getValue()));
   }
 
   // Process the operands and results of the operation. For all values up to
@@ -159,10 +157,10 @@ static void getTreePredicates(std::vector<PositionalPredicate> &predList,
   /// Operands.
   if (operands.size() == 1 && operands[0].getType().isa<pdl::RangeType>()) {
     getTreePredicates(predList, operands.front(), builder, inputs,
-                      builder.getAllOperands(opPos));
+                      builder.getAllOperands(pos));
   } else {
     bool foundVariableLength = false;
-    for (auto operandIt : llvm::enumerate(operands)) {
+    for (const auto &operandIt : llvm::enumerate(operands)) {
       bool isVariadic = operandIt.value().getType().isa<pdl::RangeType>();
       foundVariableLength |= isVariadic;
 
@@ -171,17 +169,18 @@ static void getTreePredicates(std::vector<PositionalPredicate> &predList,
       if (ignoreOperand && *ignoreOperand == operandIt.index())
         continue;
 
-      Position *pos =
+      Position *operandPos =
           foundVariableLength
-              ? builder.getOperandGroup(opPos, operandIt.index(), isVariadic)
-              : builder.getOperand(opPos, operandIt.index());
-      getTreePredicates(predList, operandIt.value(), builder, inputs, pos);
+              ? builder.getOperandGroup(pos, operandIt.index(), isVariadic)
+              : builder.getOperand(pos, operandIt.index());
+      getTreePredicates(predList, operandIt.value(), builder, inputs,
+                        operandPos);
     }
   }
   /// Results.
   if (types.size() == 1 && types[0].getType().isa<pdl::RangeType>()) {
     getTreePredicates(predList, types.front(), builder, inputs,
-                      builder.getType(builder.getAllResults(opPos)));
+                      builder.getType(builder.getAllResults(pos)));
   } else {
     bool foundVariableLength = false;
     for (auto &resultIt : llvm::enumerate(types)) {
@@ -270,8 +269,8 @@ static void getConstraintPredicates(pdl::ApplyNativeConstraintOp op,
   // Push the constraint to the furthest position.
   Position *pos = *std::max_element(allPositions.begin(), allPositions.end(),
                                     comparePosDepth);
-  PredicateBuilder::Predicate pred =
-      builder.getConstraint(op.name(), std::move(allPositions), parameters);
+  PredicateBuilder::Predicate pred = builder.getConstraint(
+      op.name(), std::move(allPositions), parameters, op->getResultTypes());
   predList.emplace_back(pos, pred);
 }
 

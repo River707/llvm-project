@@ -91,8 +91,8 @@ static void visit(Operation *op, DenseSet<Operation *> &visited) {
 //===----------------------------------------------------------------------===//
 
 static LogicalResult verify(ApplyNativeConstraintOp op) {
-  if (op.getNumOperands() == 0)
-    return op.emitOpError("expected at least one argument");
+  if (op.getNumOperands() == 0 && op.getNumResults() == 0)
+    return op.emitOpError("expected at least one argument or result");
   return success();
 }
 

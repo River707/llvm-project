@@ -15,19 +15,21 @@ using namespace mlir;
 /// Custom constraint invoked from PDL.
 static LogicalResult customSingleEntityConstraint(PDLValue value,
                                                   ArrayAttr constantParams,
-                                                  PatternRewriter &rewriter) {
+                                                  PatternRewriter &rewriter,
+                                                  PDLResultList &results) {
   Operation *rootOp = value.cast<Operation *>();
   return success(rootOp->getName().getStringRef() == "test.op");
 }
 static LogicalResult customMultiEntityConstraint(ArrayRef<PDLValue> values,
                                                  ArrayAttr constantParams,
-                                                 PatternRewriter &rewriter) {
-  return customSingleEntityConstraint(values[1], constantParams, rewriter);
+                                                 PatternRewriter &rewriter,
+                                                 PDLResultList &results) {
+  return customSingleEntityConstraint(values[1], constantParams, rewriter,
+                                      results);
 }
-static LogicalResult
-customMultiEntityVariadicConstraint(ArrayRef<PDLValue> values,
-                                    ArrayAttr constantParams,
-                                    PatternRewriter &rewriter) {
+static LogicalResult customMultiEntityVariadicConstraint(
+    ArrayRef<PDLValue> values, ArrayAttr constantParams,
+    PatternRewriter &rewriter, PDLResultList &results) {
   if (llvm::any_of(values, [](const PDLValue &value) { return !value; }))
     return failure();
   ValueRange operandValues = values[0].cast<ValueRange>();

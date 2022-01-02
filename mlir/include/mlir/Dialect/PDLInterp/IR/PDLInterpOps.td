@@ -101,7 +101,8 @@ def PDLInterp_ApplyConstraintOp : PDLInterp_PredicateOp<"apply_constraint"> {
     has been registered with the interpreter, with a given set of positional
     values. The constraint may have any number of constant parameters. On
     success, this operation branches to the true destination, otherwise the
-    false destination is taken.
+    false destination is taken. The constraint function may return any number of
+    results.
 
     Example:
 
@@ -109,15 +110,18 @@ def PDLInterp_ApplyConstraintOp : PDLInterp_PredicateOp<"apply_constraint"> {
     // Apply `myConstraint` to the entities defined by `input`, `attr`, and
     // `op`.
     pdl_interp.apply_constraint "myConstraint"[42, "abc", i32](%input, %attr, %op : !pdl.value, !pdl.attribute, !pdl.operation) -> ^matchDest, ^failureDest
+
+    // Apply `myConstraint` to `op` and return a value range.
+    pdl_interp.apply_constraint "myConstraint"(%op : !pdl.operation) : !pdl.range<value> -> ^matchDest, ^failureDest
     ```
   }];
 
   let arguments = (ins StrAttr:$name,
                        Variadic<PDL_AnyType>:$args,
                        OptionalAttr<ArrayAttr>:$constParams);
+  let results = (outs Variadic<PDL_AnyType>:$results);
   let assemblyFormat = [{
-    $name ($constParams^)? `(` $args `:` type($args) `)` attr-dict `->`
-    successors
+    $name ($constParams^)? `(` $args `:` type($args) `)` (`:` type($results)^)?  attr-dict `->` successors
   }];
 }
 

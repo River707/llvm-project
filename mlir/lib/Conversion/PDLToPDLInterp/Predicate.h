@@ -52,6 +52,7 @@ enum Kind : unsigned {
   TypePos,
   AttributeLiteralPos,
   TypeLiteralPos,
+  ConstraintResultPos,
 
   // Questions, ordered by dependency and decreasing priority.
   IsNotNullQuestion,
@@ -129,6 +130,7 @@ public:
 // Positions
 //===----------------------------------------------------------------------===//
 
+struct ConstraintQuestion;
 struct OperationPosition;
 
 /// A position describes a value on the input IR on which a predicate may be
@@ -183,6 +185,23 @@ struct AttributeLiteralPosition
     : public PredicateBase<AttributeLiteralPosition, Position, Attribute,
                            Predicates::AttributeLiteralPos> {
   using PredicateBase::PredicateBase;
+};
+
+//===----------------------------------------------------------------------===//
+// ConstraintResultPosition
+
+/// A position describing the result of a constraint.
+struct ConstraintResultPosition
+    : public PredicateBase<ConstraintResultPosition, Position,
+                           std::pair<ConstraintQuestion *, unsigned>,
+                           Predicates::ConstraintResultPos> {
+  using PredicateBase::PredicateBase;
+
+  /// Returns the parent constraint of this position.
+  ConstraintQuestion *getConstraint() const { return key.first; }
+
+  /// Returns the result number of this position.
+  unsigned getResultNumber() const { return key.second; }
 };
 
 //===----------------------------------------------------------------------===//
@@ -423,7 +442,7 @@ struct AttributeQuestion
 struct ConstraintQuestion
     : public PredicateBase<
           ConstraintQuestion, Qualifier,
-          std::tuple<StringRef, ArrayRef<Position *>, Attribute>,
+          std::tuple<StringRef, ArrayRef<Position *>, Attribute, TypeRange>,
           Predicates::ConstraintQuestion> {
   using Base::Base;
 
@@ -438,12 +457,15 @@ struct ConstraintQuestion
     return std::get<2>(key).dyn_cast_or_null<ArrayAttr>();
   }
 
+  /// Return the result types of the constraint.
+  TypeRange getResults() const { return std::get<3>(key); }
+
   /// Construct an instance with the given storage allocator.
   static ConstraintQuestion *construct(StorageUniquer::StorageAllocator &alloc,
                                        KeyTy key) {
     return Base::construct(alloc, KeyTy{alloc.copyInto(std::get<0>(key)),
                                         alloc.copyInto(std::get<1>(key)),
-                                        std::get<2>(key)});
+                                        std::get<2>(key), std::get<3>(key)});
   }
 };
 
@@ -496,6 +518,7 @@ public:
     // Register the types of Positions with the uniquer.
     registerParametricStorageType<AttributePosition>();
     registerParametricStorageType<AttributeLiteralPosition>();
+    registerParametricStorageType<ConstraintResultPosition>();
     registerParametricStorageType<OperandPosition>();
     registerParametricStorageType<OperandGroupPosition>();
     registerParametricStorageType<OperationPosition>();
@@ -568,6 +591,12 @@ public:
     return AttributeLiteralPosition::get(uniquer, attr);
   }
 
+  /// Returns the result position of a constraint question.
+  ConstraintResultPosition *getConstraintResult(ConstraintQuestion *constraint,
+                                                unsigned result) {
+    return ConstraintResultPosition::get(uniquer, constraint, result);
+  }
+
   /// Returns an operand position for an operand of the given operation.
   Position *getOperand(OperationPosition *p, unsigned operand) {
     return OperandPosition::get(uniquer, p, operand);
@@ -632,10 +661,10 @@ public:
 
   /// Create a predicate that applies a generic constraint.
   Predicate getConstraint(StringRef name, ArrayRef<Position *> pos,
-                          Attribute params) {
-    return {
-        ConstraintQuestion::get(uniquer, std::make_tuple(name, pos, params)),
-        TrueAnswer::get(uniquer)};
+                          Attribute params, TypeRange results) {
+    return {ConstraintQuestion::get(
+                uniquer, std::make_tuple(name, pos, params, results)),
+            TrueAnswer::get(uniquer)};
   }
 
   /// Create a predicate comparing a value with null.

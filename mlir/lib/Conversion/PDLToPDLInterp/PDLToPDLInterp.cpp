@@ -41,6 +41,10 @@ public:
 private:
   using ValueMap = llvm::ScopedHashTable<Position *, Value>;
   using ValueMapScope = llvm::ScopedHashTableScope<Position *, Value>;
+  using ConstraintValueMap =
+      llvm::ScopedHashTable<ConstraintQuestion *, ResultRange>;
+  using ConstraintValueMapScope =
+      llvm::ScopedHashTableScope<ConstraintQuestion *, ResultRange>;
 
   /// Generate interpreter operations for the tree rooted at the given matcher
   /// node, in the specified region.
@@ -123,6 +127,10 @@ private:
   /// value.
   ValueMap values;
 
+  /// A scoped map connecting a constraint question with the corresponding
+  /// interpreter values that it produces.
+  ConstraintValueMap constraintMap;
+
   /// A stack of blocks used as the failure destination for matcher nodes that
   /// don't have an explicit failure path.
   SmallVector<Block *, 8> failureBlockStack;
@@ -147,6 +155,7 @@ void PatternLowering::lower(ModuleOp module) {
 
   // Define top-level scope for the arguments to the matcher function.
   ValueMapScope topLevelValueScope(values);
+  ConstraintValueMapScope topLevelConstraintScope(constraintMap);
 
   // Insert the root operation, i.e. argument to the matcher, at the root
   // position.
@@ -169,6 +178,7 @@ Block *PatternLowering::generateMatcher(MatcherNode &node, Region &region) {
   // Push a new scope for the values used by this matcher.
   Block *block = &region.emplaceBlock();
   ValueMapScope scope(values);
+  ConstraintValueMapScope constraintScope(constraintMap);
 
   // If this is the return node, simply insert the corresponding interpreter
   // finalize.
@@ -432,9 +442,10 @@ void PatternLowering::generate(BoolNode *boolNode, Block *&currentBlock,
   }
   case Predicates::ConstraintQuestion: {
     auto *cstQuestion = cast<ConstraintQuestion>(question);
-    builder.create<pdl_interp::ApplyConstraintOp>(
-        loc, cstQuestion->getName(), args, cstQuestion->getParams(), success,
-        failure);
+    Operation *cstOp = builder.create<pdl_interp::ApplyConstraintOp>(
+        loc, cstQuestion->getResults(), cstQuestion->getName(), args,
+        cstQuestion->getParams(), success, failure);
+    constraintMap.insert(cstQuestion, cstOp->getResults());
     break;
   }
   default:
