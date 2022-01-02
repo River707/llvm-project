@@ -10,7 +10,8 @@
 			"name": "Run Extension",
 			"runtimeExecutable": "${execPath}",
 			"args": [
-				"--extensionDevelopmentPath=${workspaceRoot}"
+				"--extensionDevelopmentPath=${workspaceRoot}",
+				"--enable-proposed-api"
 			],
 			"outFiles": [
 				"${workspaceRoot}/out/**/*.js"

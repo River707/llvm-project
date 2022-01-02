@@ -585,3 +585,29 @@ llvm::json::Value mlir::lsp::toJSON(const PublishDiagnosticsParams &params) {
       {"version", params.version},
   };
 }
+
+//===----------------------------------------------------------------------===//
+// MLIRPipelineExecution
+//===----------------------------------------------------------------------===//
+
+bool mlir::lsp::fromJSON(const llvm::json::Value &value,
+                         MLIRPipelineExecutionParams &result,
+                         llvm::json::Path path) {
+  llvm::json::ObjectMapper o(value, path);
+  return o && o.map("textUri", result.textUri) &&
+         o.map("textString", result.textString) &&
+         o.map("pipeline", result.pipeline);
+}
+
+llvm::json::Value mlir::lsp::toJSON(const MLIRPipelineExecutionResult &result) {
+  return llvm::json::Object{
+      {"output", result.output},
+      {"inputToOutputMapping",
+       llvm::json::Array(llvm::map_range(
+           result.inputToOutputMapping,
+           [](const std::pair<unsigned, std::vector<unsigned>> &it)
+               -> llvm::json::Value {
+             return llvm::json::Array({it.first, llvm::json::Array(it.second)});
+           }))},
+  };
+}

@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-
 import {MLIRContext} from './mlirContext';
 
 /**

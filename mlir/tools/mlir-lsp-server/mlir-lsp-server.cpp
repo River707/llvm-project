@@ -9,6 +9,7 @@
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
+#include "mlir/InitAllPasses.h"
 #include "mlir/Tools/mlir-lsp-server/MlirLspServerMain.h"
 
 using namespace mlir;
@@ -16,5 +17,6 @@ using namespace mlir;
 int main(int argc, char **argv) {
   DialectRegistry registry;
   registerAllDialects(registry);
+  registerAllPasses();
   return failed(MlirLspServerMain(argc, argv, registry));
 }

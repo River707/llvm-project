@@ -639,6 +639,38 @@ struct PublishDiagnosticsParams {
 /// Add support for JSON serialization.
 llvm::json::Value toJSON(const PublishDiagnosticsParams &params);
 
+//===----------------------------------------------------------------------===//
+// MLIRPipelineExecution
+//===----------------------------------------------------------------------===//
+
+/// This is an MLIR extension that allows for executing a pass pipeline on a
+/// .mlir file.
+struct MLIRPipelineExecutionParams {
+  /// An identifier to the .mlir document that the pipeline should execute on.
+  /// If this is set, `textString` is None.
+  Optional<URIForFile> textUri;
+
+  /// A source .mlir string that the pipeline should execute on. If this is set,
+  /// `textUri` is None.
+  Optional<std::string> textString;
+
+  /// The pass pipeline that should be executed.
+  std::string pipeline;
+};
+bool fromJSON(const llvm::json::Value &value,
+              MLIRPipelineExecutionParams &result, llvm::json::Path path);
+
+struct MLIRPipelineExecutionResult {
+  static MLIRPipelineExecutionResult error(StringRef str) {
+    return MLIRPipelineExecutionResult{str.str(), {}};
+  }
+
+  std::string output;
+
+  std::vector<std::pair<unsigned, std::vector<unsigned>>> inputToOutputMapping;
+};
+llvm::json::Value toJSON(const MLIRPipelineExecutionResult &result);
+
 } // namespace lsp
 } // namespace mlir
 

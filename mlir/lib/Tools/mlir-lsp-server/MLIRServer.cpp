@@ -9,9 +9,13 @@
 #include "MLIRServer.h"
 #include "lsp/Logging.h"
 #include "lsp/Protocol.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Parser.h"
 #include "mlir/Parser/AsmParserState.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/Support/SourceMgr.h"
 
 using namespace mlir;
@@ -170,7 +174,6 @@ static Optional<unsigned> getResultNumberFromLoc(llvm::SMLoc loc) {
   return numberStr.consumeInteger(10, resultNumber) ? Optional<unsigned>()
                                                     : resultNumber;
 }
-
 /// Given a source location range, return the text covered by the given range.
 /// If the range is invalid, returns None.
 static Optional<StringRef> getTextFromRange(llvm::SMRange range) {
@@ -256,6 +259,97 @@ static lsp::Diagnostic getLspDiagnoticFromDiag(llvm::SourceMgr &sourceMgr,
   return lspDiag;
 }
 
+static OwningOpRef<ModuleOp>
+parseIRFromString(StringRef contentID, StringRef contents, MLIRContext &context,
+                  llvm::SourceMgr &sourceMgr, AsmParserState &asmState) {
+  // Try to parsed the given IR string.
+  auto memBuffer = llvm::MemoryBuffer::getMemBufferCopy(contents, contentID);
+  if (!memBuffer) {
+    lsp::Logger::error("Failed to create memory buffer for file {0}",
+                       contentID);
+    return nullptr;
+  }
+
+  sourceMgr.AddNewSourceBuffer(std::move(memBuffer), llvm::SMLoc());
+  OwningModuleRef module = ModuleOp::create(UnknownLoc::get(&context));
+  if (failed(parseSourceFile(sourceMgr, module->getBody(), &context, nullptr,
+                             &asmState))) {
+    module->getBody()->clear();
+    asmState = AsmParserState();
+  }
+  return std::move(module);
+}
+
+static lsp::MLIRPipelineExecutionResult
+executePipeline(Operation *origOp, StringRef pipeline,
+                AsmParserState &asmParserState, llvm::SourceMgr &sourceMgr,
+                bool executeInPlace) {
+  Operation *op = executeInPlace ? origOp : origOp->clone();
+  if (executeInPlace) {
+    op->walk([](Operation *nestedOp) {
+      nestedOp->setLoc(OpaqueLoc::get(nestedOp, nestedOp->getLoc()));
+    });
+  } else {
+    SmallVector<std::tuple<Operation *, Operation *>> worklist;
+    worklist.emplace_back(origOp, op);
+    while (!worklist.empty()) {
+      Operation *nestedOrigOp, *nestedOp;
+      std::tie(nestedOrigOp, nestedOp) = worklist.pop_back_val();
+      for (auto it :
+           llvm::zip(nestedOrigOp->getRegions(), nestedOp->getRegions())) {
+        auto nestedOpRange =
+            llvm::zip(std::get<0>(it).getOps(), std::get<1>(it).getOps());
+        for (auto opIt : nestedOpRange)
+          worklist.emplace_back(&std::get<0>(opIt), &std::get<1>(opIt));
+      }
+      nestedOp->setLoc(OpaqueLoc::get(nestedOrigOp, nestedOp->getLoc()));
+    }
+  }
+
+  PassManager pm(op->getContext(), op->getName().getStringRef());
+  if (failed(parsePassPipeline(pipeline, pm)))
+    return lsp::MLIRPipelineExecutionResult::error("error parsing pipeline");
+  if (failed(pm.run(op)))
+    return lsp::MLIRPipelineExecutionResult::error("error running pipeline");
+
+  lsp::MLIRPipelineExecutionResult result;
+  llvm::raw_string_ostream os(result.output);
+
+  AsmState::LocationMap printerLocationMap;
+  AsmState asmPrinterState(op, &printerLocationMap);
+  op->print(os, asmPrinterState);
+
+  llvm::MapVector<unsigned, std::vector<unsigned>> inputToOutputMapping;
+  op->walk([&](Operation *nestedOp) {
+    nestedOp->getLoc()->walk([&](Location loc) {
+      OpaqueLoc opaqueLoc = loc.dyn_cast<OpaqueLoc>();
+      if (!opaqueLoc)
+        return WalkResult::advance();
+
+      Operation *origOp =
+          reinterpret_cast<Operation *>(opaqueLoc.getUnderlyingLocation());
+
+      const AsmParserState::OperationDefinition *origOpDef =
+          asmParserState.getOpDef(origOp);
+      if (!origOpDef) {
+        llvm::errs() << "no original location for opaqueLoc: " << origOp
+                     << "\n";
+        return WalkResult::advance();
+      }
+      unsigned origLine =
+          sourceMgr.getLineAndColumn(origOpDef->loc.Start).first;
+      inputToOutputMapping[origLine].push_back(
+          printerLocationMap[nestedOp].first);
+      return WalkResult::advance();
+    });
+  });
+  result.inputToOutputMapping = inputToOutputMapping.takeVector();
+
+  op->erase();
+  os.flush();
+  return result;
+}
+
 //===----------------------------------------------------------------------===//
 // MLIRDocument
 //===----------------------------------------------------------------------===//
@@ -306,6 +400,12 @@ struct MLIRDocument {
                            std::vector<lsp::DocumentSymbol> &symbols);
 
   //===--------------------------------------------------------------------===//
+  // Pipeline Execution
+  //===--------------------------------------------------------------------===//
+
+  lsp::MLIRPipelineExecutionResult executePipeline(StringRef pipeline);
+
+  //===--------------------------------------------------------------------===//
   // Fields
   //===--------------------------------------------------------------------===//
 
@@ -314,7 +414,7 @@ struct MLIRDocument {
   AsmParserState asmState;
 
   /// The container for the IR parsed from the input file.
-  Block parsedIR;
+  OwningOpRef<ModuleOp> parsedIR;
 
   /// The source manager containing the contents of the input file.
   llvm::SourceMgr sourceMgr;
@@ -329,20 +429,8 @@ MLIRDocument::MLIRDocument(MLIRContext &context, const lsp::URIForFile &uri,
   });
 
   // Try to parsed the given IR string.
-  auto memBuffer = llvm::MemoryBuffer::getMemBufferCopy(contents, uri.file());
-  if (!memBuffer) {
-    lsp::Logger::error("Failed to create memory buffer for file", uri.file());
-    return;
-  }
-
-  sourceMgr.AddNewSourceBuffer(std::move(memBuffer), llvm::SMLoc());
-  if (failed(parseSourceFile(sourceMgr, &parsedIR, &context, nullptr,
-                             &asmState))) {
-    // If parsing failed, clear out any of the current state.
-    parsedIR.clear();
-    asmState = AsmParserState();
-    return;
-  }
+  parsedIR =
+      parseIRFromString(uri.file(), contents, context, sourceMgr, asmState);
 }
 
 //===----------------------------------------------------------------------===//
@@ -606,7 +694,7 @@ lsp::Hover MLIRDocument::buildHoverForBlockArgument(
 
 void MLIRDocument::findDocumentSymbols(
     std::vector<lsp::DocumentSymbol> &symbols) {
-  for (Operation &op : parsedIR)
+  for (Operation &op : parsedIR->getOps())
     findDocumentSymbols(&op, symbols);
 }
 
@@ -642,6 +730,16 @@ void MLIRDocument::findDocumentSymbols(
   for (Region &region : op->getRegions())
     for (Operation &childOp : region.getOps())
       findDocumentSymbols(&childOp, *childSymbols);
+}
+
+//===----------------------------------------------------------------------===//
+// MLIRDocument: Pipeline Execution
+//===----------------------------------------------------------------------===//
+
+lsp::MLIRPipelineExecutionResult
+MLIRDocument::executePipeline(StringRef pipeline) {
+  return ::executePipeline(*parsedIR, pipeline, asmState, sourceMgr,
+                           /*executeInPlace=*/false);
 }
 
 //===----------------------------------------------------------------------===//
@@ -699,6 +797,11 @@ public:
   Optional<lsp::Hover> findHover(const lsp::URIForFile &uri,
                                  lsp::Position hoverPos);
   void findDocumentSymbols(std::vector<lsp::DocumentSymbol> &symbols);
+
+  // DO NOT SUBMIT: Choose the correct chunk based on something (file pos?).
+  lsp::MLIRPipelineExecutionResult executePipeline(StringRef pipeline) {
+    return chunks[0]->document.executePipeline(pipeline);
+  }
 
 private:
   /// Find the MLIR document that contains the given position, and update the
@@ -926,4 +1029,27 @@ void lsp::MLIRServer::findDocumentSymbols(
   auto fileIt = impl->files.find(uri.file());
   if (fileIt != impl->files.end())
     fileIt->second->findDocumentSymbols(symbols);
+}
+
+lsp::MLIRPipelineExecutionResult
+lsp::MLIRServer::executePipeline(const URIForFile &uri, StringRef pipeline) {
+  auto fileIt = impl->files.find(uri.file());
+  if (fileIt == impl->files.end())
+    return MLIRPipelineExecutionResult::error("could not find file");
+  return fileIt->second->executePipeline(pipeline);
+}
+
+lsp::MLIRPipelineExecutionResult
+lsp::MLIRServer::executePipeline(StringRef contents, StringRef pipeline) {
+  MLIRContext context(impl->registry);
+  context.allowUnregisteredDialects();
+  llvm::SourceMgr sourceMgr;
+
+  AsmParserState asmParserState;
+  OwningModuleRef parsedIR = parseIRFromString(
+      "MLIR Intermediate Blob", contents, context, sourceMgr, asmParserState);
+  if (!parsedIR)
+    return MLIRPipelineExecutionResult::error("failed to parse IR");
+  return ::executePipeline(*parsedIR, pipeline, asmParserState, sourceMgr,
+                           /*executeInPlace=*/true);
 }

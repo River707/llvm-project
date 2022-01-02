@@ -3,6 +3,7 @@ import * as vscodelc from 'vscode-languageclient';
 
 import * as config from './config';
 import * as configWatcher from './configWatcher';
+import * as notebook from './notebook/notebook';
 
 /**
  *  This class manages all of the MLIR extension state,
@@ -54,6 +55,9 @@ export class MLIRContext implements vscode.Disposable {
 
     // Watch for configuration changes.
     configWatcher.activate(this);
+
+    // Register the notebook subscriber.
+    notebook.activate(this);
   }
 
   dispose() {

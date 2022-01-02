@@ -20,6 +20,7 @@ struct Diagnostic;
 struct DocumentSymbol;
 struct Hover;
 struct Location;
+struct MLIRPipelineExecutionResult;
 struct Position;
 class URIForFile;
 
@@ -59,6 +60,14 @@ public:
   /// Find all of the document symbols within the given file.
   void findDocumentSymbols(const URIForFile &uri,
                            std::vector<DocumentSymbol> &symbols);
+
+  /// Execute the given pass pipeline on the file defined by 'uri'.
+  MLIRPipelineExecutionResult executePipeline(const URIForFile &uri,
+                                              StringRef pipeline);
+
+  /// Execute the given pass pipeline on the IR defined by 'contents'.
+  MLIRPipelineExecutionResult executePipeline(StringRef contents,
+                                              StringRef pipeline);
 
 private:
   struct Impl;

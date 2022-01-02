@@ -63,6 +63,12 @@ struct LSPServer::Impl {
                         Callback<std::vector<DocumentSymbol>> reply);
 
   //===--------------------------------------------------------------------===//
+  // MLIR Extensions
+
+  void onExecutePipeline(const MLIRPipelineExecutionParams &params,
+                         Callback<MLIRPipelineExecutionResult> reply);
+
+  //===--------------------------------------------------------------------===//
   // Fields
   //===--------------------------------------------------------------------===//
 
@@ -193,6 +199,17 @@ void LSPServer::Impl::onDocumentSymbol(
 }
 
 //===----------------------------------------------------------------------===//
+// MLIR Extensions
+
+void LSPServer::Impl::onExecutePipeline(
+    const MLIRPipelineExecutionParams &params,
+    Callback<MLIRPipelineExecutionResult> reply) {
+  if (params.textUri)
+    return reply(server.executePipeline(*params.textUri, params.pipeline));
+  reply(server.executePipeline(*params.textString, params.pipeline));
+}
+
+//===----------------------------------------------------------------------===//
 // LSPServer
 //===----------------------------------------------------------------------===//
 
@@ -233,6 +250,10 @@ LogicalResult LSPServer::run() {
   impl->publishDiagnostics =
       messageHandler.outgoingNotification<PublishDiagnosticsParams>(
           "textDocument/publishDiagnostics");
+
+  // MLIR Extensions
+  messageHandler.method("mlir/executePipeline", impl.get(),
+                        &Impl::onExecutePipeline);
 
   // Run the main loop of the transport.
   LogicalResult result = success();

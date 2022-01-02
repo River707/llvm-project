@@ -1,5 +1,6 @@
 {
 	"compilerOptions": {
+        "experimentalDecorators": true,
 		"module": "commonjs",
 		"target": "es6",
 		"outDir": "out",
@@ -7,7 +8,8 @@
 		"sourceMap": true
 	},
 	"include": [
-		"src"
+		"src",
+		"./vscode*.d.ts"
 	],
 	"exclude": [
 		"node_modules",
