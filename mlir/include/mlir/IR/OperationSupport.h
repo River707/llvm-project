@@ -691,6 +691,29 @@ private:
 } // namespace detail
 
 //===----------------------------------------------------------------------===//
+// OperandStorage
+//===----------------------------------------------------------------------===//
+
+namespace detail {
+/// This class is used to provide storage for the counts of various Operation
+/// fields when those fields contain an abnormally large number of elements.
+/// This allows for keeping the size of Operation small in the overwhelmingly
+/// common case, but retaining support for large counts.
+struct LargeOperationFieldCounts {
+  LargeOperationFieldCounts(unsigned numRegions, unsigned numResults,
+                            unsigned numSuccs)
+      : numRegions(numRegions), numResults(numResults), numSuccs(numSuccs) {}
+
+  /// The number of regions held by the operation.
+  unsigned numRegions;
+  /// The number of results held by the operation.
+  unsigned numResults;
+  /// The number of successors held by the operation.
+  unsigned numSuccs;
+};
+} // end namespace detail
+
+//===----------------------------------------------------------------------===//
 // OpPrintingFlags
 //===----------------------------------------------------------------------===//
 

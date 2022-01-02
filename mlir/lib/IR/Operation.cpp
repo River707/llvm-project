@@ -70,6 +70,18 @@ Operation *Operation::create(Location location, OperationName name,
   unsigned numOperands = operands.size();
   unsigned numResults = resultTypes.size();
 
+  // Compute the "small" counts for the relevant fields. If any of the counts
+  // are too big, we need to use the large field storage. In the case of a large
+  // storage, avoid using 0 for the small counts so that we can retain efficient
+  // "empty" checks.
+  unsigned maxNumSmallFields = std::numeric_limits<uint8_t>::max();
+  bool hasLargeFieldCount = numRegions > maxNumSmallFields ||
+                            numResults > maxNumSmallFields ||
+                            numSuccessors > maxNumSmallFields;
+  uint8_t smallNumRegions = hasLargeFieldCount ? 0xFF : numRegions;
+  uint8_t smallNumResults = hasLargeFieldCount ? 0xFF : numResults;
+  uint8_t smallNumSuccs = hasLargeFieldCount ? 0xFF : numSuccessors;
+
   // If the operation is known to have no operands, don't allocate an operand
   // storage.
   bool needsOperandStorage =
@@ -78,9 +90,11 @@ Operation *Operation::create(Location location, OperationName name,
   // Compute the byte size for the operation and the operand storage. This takes
   // into account the size of the operation, its trailing objects, and its
   // prefixed objects.
-  size_t byteSize =
-      totalSizeToAlloc<detail::OperandStorage, BlockOperand, Region, OpOperand>(
-          needsOperandStorage ? 1 : 0, numSuccessors, numRegions, numOperands);
+  size_t byteSize = totalSizeToAlloc<detail::OperandStorage,
+                                     detail::LargeOperationFieldCounts,
+                                     BlockOperand, Region, OpOperand>(
+      needsOperandStorage ? 1 : 0, hasLargeFieldCount ? 1 : 0, numSuccessors,
+      numRegions, numOperands);
   size_t prefixByteSize = llvm::alignTo(
       Operation::prefixAllocSize(numTrailingResults, numInlineResults),
       alignof(Operation));
@@ -88,12 +102,18 @@ Operation *Operation::create(Location location, OperationName name,
   void *rawMem = mallocMem + prefixByteSize;
 
   // Create the new Operation.
-  Operation *op =
-      ::new (rawMem) Operation(location, name, numResults, numSuccessors,
-                               numRegions, attributes, needsOperandStorage);
+  Operation *op = ::new (rawMem)
+      Operation(location, name, smallNumResults, smallNumSuccs, smallNumRegions,
+                attributes, hasLargeFieldCount, needsOperandStorage);
 
   assert((numSuccessors == 0 || op->mightHaveTrait<OpTrait::IsTerminator>()) &&
          "unexpected successors in a non-terminator operation");
+
+  // Initialize the field counts.
+  if (hasLargeFieldCount) {
+    new (&op->getLargeFieldCountStorage()) detail::LargeOperationFieldCounts(
+        numRegions, numResults, numSuccessors);
+  }
 
   // Initialize the results.
   auto resultTypeIt = resultTypes.begin();
@@ -122,12 +142,14 @@ Operation *Operation::create(Location location, OperationName name,
   return op;
 }
 
-Operation::Operation(Location location, OperationName name, unsigned numResults,
-                     unsigned numSuccessors, unsigned numRegions,
-                     DictionaryAttr attributes, bool hasOperandStorage)
-    : location(location), numResults(numResults), numSuccs(numSuccessors),
-      numRegions(numRegions), hasOperandStorage(hasOperandStorage), name(name),
-      attrs(attributes) {
+Operation::Operation(Location location, OperationName name,
+                     unsigned smallNumResults, unsigned smallNumSuccs,
+                     unsigned smallNumRegions, DictionaryAttr attributes,
+                     bool hasLargeFieldCounts, bool hasOperandStorage)
+    : location(location), smallNumRegions(smallNumRegions),
+      smallNumResults(smallNumResults), smallNumSuccs(smallNumSuccs),
+      hasLargeFieldCounts(hasLargeFieldCounts),
+      hasOperandStorage(hasOperandStorage), name(name), attrs(attributes) {
   assert(attributes && "unexpected null attribute dictionary");
 #ifndef NDEBUG
   if (!getDialect() && !getContext()->allowsUnregisteredDialects())
@@ -565,7 +587,7 @@ Operation *Operation::clone(BlockAndValueMapping &mapper) {
   auto *newOp = cloneWithoutRegions(mapper);
 
   // Clone the regions.
-  for (unsigned i = 0; i != numRegions; ++i)
+  for (unsigned i = 0, e = getNumRegions(); i != e; ++i)
     getRegion(i).cloneInto(&newOp->getRegion(i), mapper);
 
   return newOp;

@@ -28,6 +28,7 @@ namespace mlir {
 class alignas(8) Operation final
     : public llvm::ilist_node_with_parent<Operation, Block>,
       private llvm::TrailingObjects<Operation, detail::OperandStorage,
+                                    detail::LargeOperationFieldCounts,
                                     BlockOperand, Region, OpOperand> {
 public:
   /// Create a new Operation with the specific fields.
@@ -269,8 +270,18 @@ public:
   // Results
   //===--------------------------------------------------------------------===//
 
-  /// Return the number of results held by this operation.
-  unsigned getNumResults() { return numResults; }
+  /// Returns true if this operation has results.
+  bool hasResults() {
+    // Note: We can always rely on comparing small field counts to zero.
+    return smallNumResults != 0;
+  }
+
+  /// Returns the number of results held by this operation.
+  unsigned getNumResults() {
+    if (LLVM_UNLIKELY(hasLargeFieldCounts))
+      return getLargeFieldCountStorage().numResults;
+    return smallNumResults;
+  }
 
   /// Get the 'idx'th result of this operation.
   OpResult getResult(unsigned idx) { return OpResult(getOpResultImpl(idx)); }
@@ -282,8 +293,8 @@ public:
   result_iterator result_begin() { return getResults().begin(); }
   result_iterator result_end() { return getResults().end(); }
   result_range getResults() {
-    return numResults == 0 ? result_range(nullptr, 0)
-                           : result_range(getInlineOpResult(0), numResults);
+    return hasResults() ? result_range(getInlineOpResult(0), getNumResults())
+                        : result_range(nullptr, 0);
   }
 
   result_range getOpResults() { return getResults(); }
@@ -416,18 +427,28 @@ public:
   // Blocks
   //===--------------------------------------------------------------------===//
 
+  /// Returns true if this operation has any regions.
+  bool hasRegions() {
+    // Note: We can always rely on comparing small field counts to zero.
+    return smallNumRegions != 0;
+  }
   /// Returns the number of regions held by this operation.
-  unsigned getNumRegions() { return numRegions; }
+  unsigned getNumRegions() {
+    if (LLVM_UNLIKELY(hasLargeFieldCounts))
+      return getLargeFieldCountStorage().numRegions;
+    return smallNumRegions;
+  }
 
   /// Returns the regions held by this operation.
   MutableArrayRef<Region> getRegions() {
-    auto *regions = getTrailingObjects<Region>();
-    return {regions, numRegions};
+    if (!hasRegions())
+      return MutableArrayRef<Region>();
+    return {getTrailingObjects<Region>(), getNumRegions()};
   }
 
   /// Returns the region held by this operation at position 'index'.
   Region &getRegion(unsigned index) {
-    assert(index < numRegions && "invalid region index");
+    assert(index < getNumRegions() && "invalid region index");
     return getRegions()[index];
   }
 
@@ -435,8 +456,9 @@ public:
   // Successors
   //===--------------------------------------------------------------------===//
 
+  /// Returns the block operands held by this operation.
   MutableArrayRef<BlockOperand> getBlockOperands() {
-    return {getTrailingObjects<BlockOperand>(), numSuccs};
+    return {getTrailingObjects<BlockOperand>(), getNumSuccessors()};
   }
 
   // Successor iteration.
@@ -445,8 +467,17 @@ public:
   succ_iterator successor_end() { return getSuccessors().end(); }
   SuccessorRange getSuccessors() { return SuccessorRange(this); }
 
-  bool hasSuccessors() { return numSuccs != 0; }
-  unsigned getNumSuccessors() { return numSuccs; }
+  /// Returns true if this operation has any successors.
+  bool hasSuccessors() {
+    // Note: We can always rely on comparing small field counts to zero.
+    return smallNumSuccs != 0;
+  }
+  /// Returns the number of successors held by this operation.
+  unsigned getNumSuccessors() {
+    if (LLVM_UNLIKELY(hasLargeFieldCounts))
+      return getLargeFieldCountStorage().numSuccs;
+    return smallNumSuccs;
+  }
 
   Block *getSuccessor(unsigned index) {
     assert(index < getNumSuccessors());
@@ -601,9 +632,10 @@ private:
   bool hasValidOrder() { return orderIndex != kInvalidOrderIdx; }
 
 private:
-  Operation(Location location, OperationName name, unsigned numResults,
-            unsigned numSuccessors, unsigned numRegions,
-            DictionaryAttr attributes, bool hasOperandStorage);
+  Operation(Location location, OperationName name, unsigned smallNumResults,
+            unsigned smallNumSuccs, unsigned smallNumRegions,
+            DictionaryAttr attributes, bool hasLargeFieldCounts,
+            bool hasOperandStorage);
 
   // Operations are deleted through the destroy() member because they are
   // allocated with malloc.
@@ -628,6 +660,13 @@ private:
   detail::OperandStorage &getOperandStorage() {
     assert(hasOperandStorage && "expected operation to have operand storage");
     return *getTrailingObjects<detail::OperandStorage>();
+  }
+
+  /// Returns the large field count storage.
+  detail::LargeOperationFieldCounts &getLargeFieldCountStorage() {
+    assert(hasLargeFieldCounts &&
+           "expected operation to have large field counts");
+    return *getTrailingObjects<detail::LargeOperationFieldCounts>();
   }
 
   /// Returns a pointer to the use list for the given out-of-line result.
@@ -673,9 +712,17 @@ private:
   /// O(1) local dominance checks between operations.
   mutable unsigned orderIndex = 0;
 
-  const unsigned numResults;
-  const unsigned numSuccs;
-  const unsigned numRegions : 31;
+  /// Counts for various fields when the `hasLargeFieldCounts` is false. When
+  /// true, the counts are stored in the trailing `LargeOperationFieldCounts`
+  /// storage; and all of these fields are assigned to a non-zero value (this
+  /// allows for efficient empty checks).
+  uint8_t smallNumRegions;
+  uint8_t smallNumResults;
+  uint8_t smallNumSuccs;
+
+  /// A flag indicating if the operation has a large number of elements for one
+  /// of its fields, i.e. regions, results, or successors.
+  bool hasLargeFieldCounts : 1;
 
   /// This bit signals whether this operation has an operand storage or not. The
   /// operand storage may be elided for operations that are known to never have
@@ -701,15 +748,22 @@ private:
   friend class llvm::ilist_node_with_parent<Operation, Block>;
 
   // This stuff is used by the TrailingObjects template.
-  friend llvm::TrailingObjects<Operation, detail::OperandStorage, BlockOperand,
+  friend llvm::TrailingObjects<Operation, detail::OperandStorage,
+                               detail::LargeOperationFieldCounts, BlockOperand,
                                Region, OpOperand>;
   size_t numTrailingObjects(OverloadToken<detail::OperandStorage>) const {
     return hasOperandStorage ? 1 : 0;
   }
-  size_t numTrailingObjects(OverloadToken<BlockOperand>) const {
-    return numSuccs;
+  size_t
+  numTrailingObjects(OverloadToken<detail::LargeOperationFieldCounts>) const {
+    return hasLargeFieldCounts ? 1 : 0;
   }
-  size_t numTrailingObjects(OverloadToken<Region>) const { return numRegions; }
+  size_t numTrailingObjects(OverloadToken<BlockOperand>) const {
+    return const_cast<Operation *>(this)->getNumSuccessors();
+  }
+  size_t numTrailingObjects(OverloadToken<Region>) const {
+    return const_cast<Operation *>(this)->getNumRegions();
+  }
 };
 
 inline raw_ostream &operator<<(raw_ostream &os, const Operation &op) {
