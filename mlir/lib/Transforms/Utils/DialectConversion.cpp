@@ -370,9 +370,13 @@ public:
     /// argument type, to a legal one.
     Argument,
 
+    /// This materialization materializes a conversion from a set of legal types
+    /// to an illegal type.
+    Source,
+
     /// This materialization materializes a conversion from an illegal type to a
     /// legal one.
-    Target
+    Target,
   };
 
   UnresolvedMaterialization(UnrealizedConversionCastOp op = nullptr,
@@ -403,7 +407,7 @@ private:
 
   /// The corresponding type converter to use when resolving this
   /// materialization, and the kind of this materialization.
-  llvm::PointerIntPair<TypeConverter *, 1, Kind> converterAndKind;
+  llvm::PointerIntPair<TypeConverter *, 2, Kind> converterAndKind;
 
   /// The original output type. This is only used for argument conversions.
   Type origOutputType;
@@ -423,7 +427,8 @@ static Value buildUnresolvedMaterialization(
 
   // Create an unresolved materialization. We use a new OpBuilder to avoid
   // tracking the materialization like we do for other operations.
-  OpBuilder builder(insertBlock, insertPt);
+  OpBuilder builder(loc.getContext());
+  builder.setInsertionPoint(insertBlock, insertPt);
   auto convertOp =
       builder.create<UnrealizedConversionCastOp>(loc, outputType, inputs);
   unresolvedMaterializations.emplace_back(convertOp, converter, kind,
@@ -438,6 +443,14 @@ static Value buildUnresolvedArgumentMaterialization(
       UnresolvedMaterialization::Argument, rewriter.getInsertionBlock(),
       rewriter.getInsertionPoint(), loc, inputs, outputType, origOutputType,
       converter, unresolvedMaterializations);
+}
+static Value buildUnresolvedSourceMaterialization(
+    Location loc, ValueRange inputs, Type outputType, Block *insertBlock,
+    Block::iterator insertPt, TypeConverter *converter,
+    SmallVectorImpl<UnresolvedMaterialization> &unresolvedMaterializations) {
+  return buildUnresolvedMaterialization(
+      UnresolvedMaterialization::Source, insertBlock, insertPt, loc, inputs,
+      outputType, outputType, converter, unresolvedMaterializations);
 }
 static Value buildUnresolvedTargetMaterialization(
     Location loc, Value input, Type outputType, TypeConverter *converter,
@@ -794,29 +807,65 @@ Block *ArgConverter::applySignatureConversion(
     auto replArgs = newArgs.slice(inputMap->inputNo, inputMap->size);
     Value newArg;
 
-    // If this is a 1->1 mapping and the types of new and replacement arguments
-    // match (i.e. it's an identity map), then the argument is mapped to its
-    // original type.
-    // FIXME: We simply pass through the replacement argument if there wasn't a
-    // converter, which isn't great as it allows implicit type conversions to
-    // appear. We should properly restructure this code to handle cases where a
-    // converter isn't provided and also to properly handle the case where an
-    // argument materialization is actually a temporary source materialization
-    // (e.g. in the case of 1->N).
-    if (replArgs.size() == 1 &&
-        (!converter || replArgs[0].getType() == origArg.getType())) {
-      newArg = replArgs.front();
+    // If this is a 1->N mapping, we need to materialize a temporary source
+    // conversion for the original argument. This materialization acts as a
+    // marker for getting the expanded arguments, given that we can't directly
+    // replace the original argument with more than 1 value.
+    bool hasSingleReplValue = replArgs.size() == 1;
+    if (!hasSingleReplValue) {
+      newArg = buildUnresolvedSourceMaterialization(
+          origArg.getLoc(), replArgs, origArg.getType(),
+          rewriter.getInsertionBlock(), rewriter.getInsertionPoint(), converter,
+          unresolvedMaterializations);
+    }
+
+    // Handle the case where no type converter was provided.
+    if (!converter) {
+      // If this is a 1->1 mapping, we map the original argument to the new
+      // argument. We don't really have a concept of "legal" in this case as no
+      // converter was provided, so we can only assume that the user provided
+      // the legal type (i.e. we can't perform an argument materialization).
+      if (hasSingleReplValue) {
+        newArg = replArgs.front();
+      } else {
+        // Otherwise, there is nothing to do; we already materialized a
+        // temporary source conversion above.
+      }
     } else {
-      Type origOutputType = origArg.getType();
+      // If this is a 1->1 mapping and the types of new and replacement
+      // arguments match (i.e. it's an identity map), then the argument is
+      // mapped to its original type.
+      if (hasSingleReplValue && replArgs[0].getType() == origArg.getType()) {
+        newArg = replArgs.front();
+      } else {
+        Type origOutputType = origArg.getType();
 
-      // Legalize the argument output type.
-      Type outputType = origOutputType;
-      if (Type legalOutputType = converter->convertType(outputType))
-        outputType = legalOutputType;
+        // Legalize the argument output type to see if we should apply an
+        // argument materialization.
+        if (Type outputType = converter->convertType(origOutputType)) {
+          Value argumentMaterialization =
+              buildUnresolvedArgumentMaterialization(
+                  rewriter, origArg.getLoc(), replArgs, origOutputType,
+                  outputType, converter, unresolvedMaterializations);
 
-      newArg = buildUnresolvedArgumentMaterialization(
-          rewriter, origArg.getLoc(), replArgs, origOutputType, outputType,
-          converter, unresolvedMaterializations);
+          // If the original argument was replaced with a single value, we can
+          // use the argument materialization as the new argument directly.
+          if (hasSingleReplValue) {
+            newArg = argumentMaterialization;
+          } else {
+            // Otherwise, this is a 1->N conversion and we previously
+            // materialized a temporary source conversion back to the original
+            // type. In this case, we map the temporary materialization to the
+            // argument materialization.
+            mapping.map(newArg, argumentMaterialization);
+          }
+        } else {
+          // FIXME: Better formalize what argument materializations are supposed
+          // to mean for 1->N conversions, more specifically when the conversion
+          // for the original argument type (as defined by the converter) isn't
+          // a single type.
+        }
+      }
     }
 
     mapping.map(origArg, newArg);
@@ -2616,7 +2665,7 @@ static void computeNecessaryMaterializations(
     UnresolvedMaterialization *mat = worklist.pop_back_val();
     UnrealizedConversionCastOp op = mat->getOp();
 
-    // We currently only handle target materializations here.
+    // We currently only handle single result materializations here.
     assert(op->getNumResults() == 1 && "unexpected materialization type");
     OpResult opResult = op->getOpResult(0);
     Type outputType = opResult.getType();
@@ -2777,6 +2826,10 @@ static LogicalResult legalizeUnresolvedMaterialization(
       LLVM_FALLTHROUGH;
     case UnresolvedMaterialization::Target:
       newMaterialization = converter->materializeTargetConversion(
+          rewriter, op->getLoc(), outputType, inputOperands);
+      break;
+    case UnresolvedMaterialization::Source:
+      newMaterialization = converter->materializeSourceConversion(
           rewriter, op->getLoc(), outputType, inputOperands);
       break;
     }
