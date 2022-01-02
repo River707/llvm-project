@@ -12,6 +12,7 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/Parser.h"
 #include "mlir/Parser/AsmParserState.h"
+#include "llvm/ADT/IntervalMap.h"
 #include "llvm/Support/SourceMgr.h"
 
 using namespace mlir;
@@ -257,6 +258,120 @@ static lsp::Diagnostic getLspDiagnoticFromDiag(llvm::SourceMgr &sourceMgr,
 }
 
 //===----------------------------------------------------------------------===//
+// MLIRIndex
+//===----------------------------------------------------------------------===//
+
+namespace {
+class MLIRIndexSymbol {
+public:
+  MLIRIndexSymbol() = default;
+  MLIRIndexSymbol(const AsmParserState::OperationDefinition *baseDef,
+                  Optional<unsigned> argOrResultNum = llvm::None)
+      : baseDef(baseDef), argOrResultNum(argOrResultNum) {}
+  MLIRIndexSymbol(const AsmParserState::BlockDefinition *baseDef,
+                  Optional<unsigned> argOrResultNum = llvm::None)
+      : baseDef(baseDef), argOrResultNum(argOrResultNum) {}
+  bool operator==(const MLIRIndexSymbol &rhs) const {
+    return baseDef == rhs.baseDef && argOrResultNum == rhs.argOrResultNum;
+  }
+  bool operator!=(const MLIRIndexSymbol &rhs) const { return !(*this == rhs); }
+
+  /// If this symbol is within an operation, i.e. either the operation or one of
+  /// its results, return the operation definition. Returns nullptr otherwise.
+  const AsmParserState::OperationDefinition *getOpDef() const {
+    return baseDef.dyn_cast<const AsmParserState::OperationDefinition *>();
+  }
+
+  /// If this symbol is within a block, i.e. either the block or one of its
+  /// arguments, return the block definition. Returns nullptr otherwise.
+  const AsmParserState::BlockDefinition *getBlockDef() const {
+    return baseDef.dyn_cast<const AsmParserState::BlockDefinition *>();
+  }
+
+  // If this symbol is a block argument or operation result, return the number
+  // of this symbol. Returns None if this is an Operation or Block symbol.
+  Optional<unsigned> getArgOrResultNumber() const { return argOrResultNum; }
+
+private:
+  llvm::PointerUnion<const AsmParserState::OperationDefinition *,
+                     const AsmParserState::BlockDefinition *>
+      baseDef;
+  Optional<unsigned> argOrResultNum;
+};
+
+/// This class provides an index for definitions/uses within an MLIR document.
+/// It provides efficient lookup of a definition given an input source range.
+class MLIRIndex {
+public:
+  MLIRIndex() : intervalMap(allocator) {}
+
+  /// Initialize the index with the given parser state.
+  void initialize(const AsmParserState &state);
+
+  /// Lookup a symbol for the given location. Returns nullptr if no symbol could
+  /// be found. If provided, `overlappedRange` is set to the range that the
+  /// provided `loc` overlapped with.
+  const MLIRIndexSymbol *lookup(llvm::SMLoc loc,
+                                llvm::SMRange *overlappedRange = nullptr) const;
+
+private:
+  /// The type of interval map used to store source references. llvm::SMRange is
+  /// half-open, so we also need to use a half-open interval map.
+  using MapT = llvm::IntervalMap<
+      const char *, MLIRIndexSymbol,
+      llvm::IntervalMapImpl::NodeSizer<const char *, MLIRIndexSymbol>::LeafSize,
+      llvm::IntervalMapHalfOpenInfo<const char *>>;
+
+  /// An allocator for the interval map.
+  MapT::Allocator allocator;
+
+  /// An interval map containing a corresponding definition mapped to a source
+  /// interval.
+  MapT intervalMap;
+};
+} // namespace
+
+void MLIRIndex::initialize(const AsmParserState &state) {
+  auto addRanges = [&](ArrayRef<llvm::SMRange> ranges,
+                       const MLIRIndexSymbol &defPair) {
+    for (const llvm::SMRange &range : ranges) {
+      intervalMap.insert(range.Start.getPointer(), range.End.getPointer(),
+                         defPair);
+    }
+  };
+  auto addSMDef = [&](const AsmParserState::SMDefinition &def,
+                      const MLIRIndexSymbol &defPair) {
+    addRanges(def.loc, defPair);
+    addRanges(def.uses, defPair);
+  };
+
+  for (const AsmParserState::OperationDefinition &opDef : state.getOpDefs()) {
+    addRanges(opDef.loc, MLIRIndexSymbol(&opDef));
+    addRanges(opDef.symbolUses, MLIRIndexSymbol(&opDef));
+    for (const auto &it : llvm::enumerate(opDef.resultGroups))
+      addSMDef(it.value().definition, MLIRIndexSymbol(&opDef, it.index()));
+  }
+  for (const AsmParserState::BlockDefinition &blockDef : state.getBlockDefs()) {
+    addSMDef(blockDef.definition, MLIRIndexSymbol(&blockDef));
+    for (const auto &it : llvm::enumerate(blockDef.arguments))
+      addSMDef(it.value(), MLIRIndexSymbol(&blockDef, it.index()));
+  }
+}
+
+const MLIRIndexSymbol *MLIRIndex::lookup(llvm::SMLoc loc,
+                                         llvm::SMRange *overlappedRange) const {
+  auto it = intervalMap.find(loc.getPointer());
+  if (!it.valid())
+    return nullptr;
+
+  if (overlappedRange) {
+    *overlappedRange = llvm::SMRange(llvm::SMLoc::getFromPointer(it.start()),
+                                     llvm::SMLoc::getFromPointer(it.stop()));
+  }
+  return &it.value();
+}
+
+//===----------------------------------------------------------------------===//
 // MLIRDocument
 //===----------------------------------------------------------------------===//
 
@@ -318,6 +433,9 @@ struct MLIRDocument {
 
   /// The source manager containing the contents of the input file.
   llvm::SourceMgr sourceMgr;
+
+  /// The index used to resolve references to source definitions.
+  MLIRIndex index;
 };
 } // namespace
 
@@ -343,6 +461,9 @@ MLIRDocument::MLIRDocument(MLIRContext &context, const lsp::URIForFile &uri,
     asmState = AsmParserState();
     return;
   }
+
+  // If parsing was successful, initialize the index.
+  index.initialize(asmState);
 }
 
 //===----------------------------------------------------------------------===//
@@ -353,43 +474,42 @@ void MLIRDocument::getLocationsOf(const lsp::URIForFile &uri,
                                   const lsp::Position &defPos,
                                   std::vector<lsp::Location> &locations) {
   llvm::SMLoc posLoc = getPosFromLoc(sourceMgr, defPos);
-
-  // Functor used to check if an SM definition contains the position.
-  auto containsPosition = [&](const AsmParserState::SMDefinition &def) {
-    if (!isDefOrUse(def, posLoc))
-      return false;
-    locations.push_back(getLocationFromLoc(sourceMgr, def.loc, uri));
-    return true;
+  const MLIRIndexSymbol *symbol = index.lookup(posLoc);
+  if (!symbol)
+    return;
+  auto addLoc = [&](const llvm::SMRange &range) {
+    locations.push_back(getLocationFromLoc(sourceMgr, range, uri));
   };
 
-  // Check all definitions related to operations.
-  for (const AsmParserState::OperationDefinition &op : asmState.getOpDefs()) {
-    if (contains(op.loc, posLoc))
-      return collectLocationsFromLoc(op.op->getLoc(), locations, uri);
-    for (const auto &result : op.resultGroups)
-      if (containsPosition(result.definition))
-        return collectLocationsFromLoc(op.op->getLoc(), locations, uri);
-    for (const auto &symUse : op.symbolUses) {
-      if (contains(symUse, posLoc)) {
-        locations.push_back(getLocationFromLoc(sourceMgr, op.loc, uri));
-        return collectLocationsFromLoc(op.op->getLoc(), locations, uri);
-      }
-    }
+  // Handle definitions related to operations.
+  if (const AsmParserState::OperationDefinition *op = symbol->getOpDef()) {
+    collectLocationsFromLoc(op->op->getLoc(), locations, uri);
+
+    // Check to see if this is a result of the operation, or the operation
+    // itself.
+    if (Optional<unsigned> resultNo = symbol->getArgOrResultNumber())
+      return addLoc(op->resultGroups[*resultNo].definition.loc);
+    return addLoc(op->loc);
   }
 
-  // Check all definitions related to blocks.
-  for (const AsmParserState::BlockDefinition &block : asmState.getBlockDefs()) {
-    if (containsPosition(block.definition))
-      return;
-    for (const AsmParserState::SMDefinition &arg : block.arguments)
-      if (containsPosition(arg))
-        return;
-  }
+  // Handle definitions related to blocks.
+  const AsmParserState::BlockDefinition *block = symbol->getBlockDef();
+  assert(block && "unexpected index symbol type");
+
+  // Check to see if this is an argument of the block, or the block itself.
+  if (Optional<unsigned> argNo = symbol->getArgOrResultNumber())
+    return addLoc(block->arguments[*argNo].loc);
+  addLoc(block->definition.loc);
 }
 
 void MLIRDocument::findReferencesOf(const lsp::URIForFile &uri,
                                     const lsp::Position &pos,
                                     std::vector<lsp::Location> &references) {
+  llvm::SMLoc posLoc = getPosFromLoc(sourceMgr, pos);
+  const MLIRIndexSymbol *symbol = index.lookup(posLoc);
+  if (!symbol)
+    return;
+
   // Functor used to append all of the definitions/uses of the given SM
   // definition to the reference list.
   auto appendSMDef = [&](const AsmParserState::SMDefinition &def) {
@@ -398,39 +518,28 @@ void MLIRDocument::findReferencesOf(const lsp::URIForFile &uri,
       references.push_back(getLocationFromLoc(sourceMgr, use, uri));
   };
 
-  llvm::SMLoc posLoc = getPosFromLoc(sourceMgr, pos);
+  // Handle definitions related to operations.
+  if (const AsmParserState::OperationDefinition *op = symbol->getOpDef()) {
+    // Check to see if this is a result of the operation, or the operation
+    // itself.
+    if (Optional<unsigned> resultNo = symbol->getArgOrResultNumber())
+      return appendSMDef(op->resultGroups[*resultNo].definition);
 
-  // Check all definitions related to operations.
-  for (const AsmParserState::OperationDefinition &op : asmState.getOpDefs()) {
-    if (contains(op.loc, posLoc)) {
-      for (const auto &result : op.resultGroups)
-        appendSMDef(result.definition);
-      for (const auto &symUse : op.symbolUses)
-        if (contains(symUse, posLoc))
-          references.push_back(getLocationFromLoc(sourceMgr, symUse, uri));
-      return;
-    }
-    for (const auto &result : op.resultGroups)
-      if (isDefOrUse(result.definition, posLoc))
-        return appendSMDef(result.definition);
-    for (const auto &symUse : op.symbolUses) {
-      if (!contains(symUse, posLoc))
-        continue;
-      for (const auto &symUse : op.symbolUses)
-        references.push_back(getLocationFromLoc(sourceMgr, symUse, uri));
-      return;
-    }
+    for (const auto &result : op->resultGroups)
+      appendSMDef(result.definition);
+    for (const auto &symUse : op->symbolUses)
+      references.push_back(getLocationFromLoc(sourceMgr, symUse, uri));
+    return;
   }
 
-  // Check all definitions related to blocks.
-  for (const AsmParserState::BlockDefinition &block : asmState.getBlockDefs()) {
-    if (isDefOrUse(block.definition, posLoc))
-      return appendSMDef(block.definition);
+  // Handle definitions related to blocks.
+  const AsmParserState::BlockDefinition *block = symbol->getBlockDef();
+  assert(block && "unexpected index symbol type");
 
-    for (const AsmParserState::SMDefinition &arg : block.arguments)
-      if (isDefOrUse(arg, posLoc))
-        return appendSMDef(arg);
-  }
+  // Check to see if this is an argument of the block, or the block itself.
+  if (Optional<unsigned> argNo = symbol->getArgOrResultNumber())
+    return appendSMDef(block->arguments[*argNo]);
+  appendSMDef(block->definition);
 }
 
 //===----------------------------------------------------------------------===//
@@ -441,47 +550,38 @@ Optional<lsp::Hover> MLIRDocument::findHover(const lsp::URIForFile &uri,
                                              const lsp::Position &hoverPos) {
   llvm::SMLoc posLoc = getPosFromLoc(sourceMgr, hoverPos);
   llvm::SMRange hoverRange;
+  const MLIRIndexSymbol *symbol = index.lookup(posLoc, &hoverRange);
+  if (!symbol)
+    return llvm::None;
 
-  // Check for Hovers on operations and results.
-  for (const AsmParserState::OperationDefinition &op : asmState.getOpDefs()) {
-    // Check if the position points at this operation.
-    if (contains(op.loc, posLoc))
-      return buildHoverForOperation(op.loc, op);
-
-    // Check if the position points at the symbol name.
-    for (auto &use : op.symbolUses)
-      if (contains(use, posLoc))
-        return buildHoverForOperation(use, op);
-
-    // Check if the position points at a result group.
-    for (unsigned i = 0, e = op.resultGroups.size(); i < e; ++i) {
-      const auto &result = op.resultGroups[i];
-      if (!isDefOrUse(result.definition, posLoc, &hoverRange))
-        continue;
+  // Handle definitions related to operations.
+  if (const AsmParserState::OperationDefinition *op = symbol->getOpDef()) {
+    // Check to see if this is a result of the operation, or the operation
+    // itself.
+    if (Optional<unsigned> resultNo = symbol->getArgOrResultNumber()) {
+      const auto &result = op->resultGroups[*resultNo];
 
       // Get the range of results covered by the over position.
       unsigned resultStart = result.startIndex;
-      unsigned resultEnd = (i == e - 1) ? op.op->getNumResults()
-                                        : op.resultGroups[i + 1].startIndex;
-      return buildHoverForOperationResult(hoverRange, op.op, resultStart,
+      unsigned resultEnd = (*resultNo == op->resultGroups.size() - 1)
+                               ? op->op->getNumResults()
+                               : op->resultGroups[*resultNo + 1].startIndex;
+      return buildHoverForOperationResult(hoverRange, op->op, resultStart,
                                           resultEnd, posLoc);
     }
+
+    return buildHoverForOperation(hoverRange, *op);
   }
 
-  // Check to see if the hover is over a block argument.
-  for (const AsmParserState::BlockDefinition &block : asmState.getBlockDefs()) {
-    if (isDefOrUse(block.definition, posLoc, &hoverRange))
-      return buildHoverForBlock(hoverRange, block);
+  // Handle definitions related to blocks.
+  const AsmParserState::BlockDefinition *block = symbol->getBlockDef();
+  assert(block && "unexpected index symbol type");
 
-    for (const auto &arg : llvm::enumerate(block.arguments)) {
-      if (!isDefOrUse(arg.value(), posLoc, &hoverRange))
-        continue;
-
-      return buildHoverForBlockArgument(
-          hoverRange, block.block->getArgument(arg.index()), block);
-    }
-  }
-  return llvm::None;
+  // Check to see if this is an argument of the block, or the block itself.
+  if (Optional<unsigned> argNo = symbol->getArgOrResultNumber())
+    return buildHoverForBlockArgument(
+        hoverRange, block->block->getArgument(*argNo), *block);
+  return buildHoverForBlock(hoverRange, *block);
 }
 
 Optional<lsp::Hover> MLIRDocument::buildHoverForOperation(
