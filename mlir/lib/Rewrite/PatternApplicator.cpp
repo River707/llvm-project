@@ -13,10 +13,34 @@
 
 #include "mlir/Rewrite/PatternApplicator.h"
 #include "ByteCode.h"
+#include "mlir/Support/DebugAction.h"
 #include "llvm/Support/Debug.h"
 
 using namespace mlir;
 using namespace mlir::detail;
+
+#define DEBUG_TYPE "pattern-match"
+
+//===----------------------------------------------------------------------===//
+// Debug Actions
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// A debug action that allows for controlling the application of patterns. This
+/// action passes in as parameters:
+/// * A pointer to the root operation.
+/// * A reference to the pattern considered for application.
+struct ApplyPatternAction : DebugAction<Operation *, const Pattern &> {
+  static StringRef getTag() { return "apply-pattern"; }
+  static StringRef getDescription() {
+    return "Control the application of patterns";
+  }
+};
+} // end anonymous namespace
+
+//===----------------------------------------------------------------------===//
+// PatternApplicator
+//===----------------------------------------------------------------------===//
 
 PatternApplicator::PatternApplicator(
     const FrozenRewritePatternList &frozenPatternList)
@@ -27,8 +51,6 @@ PatternApplicator::PatternApplicator(
   }
 }
 PatternApplicator::~PatternApplicator() {}
-
-#define DEBUG_TYPE "pattern-match"
 
 void PatternApplicator::applyCostModel(CostModel model) {
   // Apply the cost model to the bytecode patterns first, and then the native
@@ -113,6 +135,8 @@ LogicalResult PatternApplicator::matchAndRewrite(
     function_ref<bool(const Pattern &)> canApply,
     function_ref<void(const Pattern &)> onFailure,
     function_ref<LogicalResult(const Pattern &)> onSuccess) {
+  DebugActionManager &debugManager = op->getContext()->getDebugActionManager();
+
   // Before checking native patterns, first match against the bytecode. This
   // won't automatically perform any rewrites so there is no need to worry about
   // conflicts.
@@ -154,6 +178,10 @@ LogicalResult PatternApplicator::matchAndRewrite(
 
     // Check that the pattern can be applied.
     if (canApply && !canApply(*bestPattern))
+      continue;
+
+    // Check the debug action for pattern application.
+    if (!debugManager.shouldExecute<ApplyPatternAction>(op, *bestPattern))
       continue;
 
     // Try to match and rewrite this pattern. The patterns are sorted by
