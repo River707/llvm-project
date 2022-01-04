@@ -170,7 +170,7 @@ protected:
     return *passState;
   }
 
-  /// Return the MLIR context for the current function being transformed.
+  /// Return the MLIR context for the current operation being transformed.
   MLIRContext &getContext() { return *getOperation()->getContext(); }
 
   /// The polymorphic API that runs the pass over the currently held operation.
@@ -332,7 +332,7 @@ private:
 ///   - modify any state within the parent operation, this includes adding
 ///     additional operations.
 ///
-/// Derived function passes are expected to provide the following:
+/// Derived operation passes are expected to provide the following:
 ///   - A 'void runOnOperation()' method.
 ///   - A 'StringRef getName() const' method.
 ///   - A 'std::unique_ptr<Pass> clonePass() const' method.
@@ -365,7 +365,7 @@ protected:
 ///   - modify any state within the parent operation, this includes adding
 ///     additional operations.
 ///
-/// Derived function passes are expected to provide the following:
+/// Derived operation passes are expected to provide the following:
 ///   - A 'void runOnOperation()' method.
 ///   - A 'StringRef getName() const' method.
 ///   - A 'std::unique_ptr<Pass> clonePass() const' method.
@@ -375,6 +375,32 @@ protected:
   OperationPass(const OperationPass &) = default;
 };
 
+/// A model for a pass run on a symbol operation that represents a definition,
+/// ignoring all instances that represent declarations. For example, this model
+/// can be used to define a pass that does not operate on external functions.
+///
+/// Derived passes are expected to provide the following:
+///   - A 'void runOnSymbol()' method.
+///   - A 'StringRef getName() const' method.
+///   - A 'std::unique_ptr<Pass> clonePass() const' method.
+template <typename OpT>
+class SymbolDefinitionPass : public OperationPass<OpT> {
+public:
+  using OperationPass<OpT>::OperationPass;
+
+  /// The polymorphic API that runs the pass over the currently held symbol
+  /// definition.
+  virtual void runOnSymbol() = 0;
+
+  /// The polymorphic API that runs the pass over the currently held operation.
+  void runOnOperation() final {
+    if (!this->getOperation().isDeclaration())
+      runOnSymbol();
+  }
+};
+
+/// NOTICE: This class is deprecated in favor of `SymbolDefinitionPass<FuncOp>`
+/// and will be removed soon.
 /// A model for providing function pass specific utilities.
 ///
 /// Derived function passes are expected to provide the following:

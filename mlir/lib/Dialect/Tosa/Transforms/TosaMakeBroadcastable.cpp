@@ -235,8 +235,8 @@ namespace {
 struct TosaMakeBroadcastable
     : public TosaMakeBroadcastableBase<TosaMakeBroadcastable> {
 public:
-  void runOnFunction() override {
-    auto func = getFunction();
+  void runOnSymbol() override {
+    auto func = getOperation();
     RewritePatternSet patterns(func.getContext());
     MLIRContext *ctx = func.getContext();
     // Add the generated patterns to the list.

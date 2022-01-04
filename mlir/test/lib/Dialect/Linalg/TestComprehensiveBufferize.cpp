@@ -38,7 +38,8 @@ namespace {
 /// A helper struct for FunctionBufferize and ModuleBufferize. Both passes are
 /// mostly identical.
 struct TestComprehensiveFunctionBufferize
-    : public PassWrapper<TestComprehensiveFunctionBufferize, FunctionPass> {
+    : public PassWrapper<TestComprehensiveFunctionBufferize,
+                         SymbolDefinitionPass<FuncOp>> {
   StringRef getArgument() const final {
     return "test-comprehensive-function-bufferize";
   }
@@ -66,7 +67,7 @@ struct TestComprehensiveFunctionBufferize
     vector_ext::registerBufferizableOpInterfaceExternalModels(registry);
   }
 
-  void runOnFunction() override;
+  void runOnSymbol() override;
 
   Option<bool> allowReturnMemref{
       *this, "allow-return-memref",
@@ -93,7 +94,7 @@ struct TestComprehensiveFunctionBufferize
 };
 } // namespace
 
-void TestComprehensiveFunctionBufferize::runOnFunction() {
+void TestComprehensiveFunctionBufferize::runOnSymbol() {
   BufferizationOptions options;
 
   // Enable InitTensorOp elimination.
@@ -116,7 +117,7 @@ void TestComprehensiveFunctionBufferize::runOnFunction() {
       options.dialectFilter->insert(dialectNamespace);
   }
 
-  Operation *op = getFunction().getOperation();
+  Operation *op = getOperation().getOperation();
   if (failed(runComprehensiveBufferize(op, options)))
     return;
 

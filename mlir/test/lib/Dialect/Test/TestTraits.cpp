@@ -31,11 +31,12 @@ OpFoldResult TestInvolutionTraitSuccesfulOperationFolderOp::fold(
 }
 
 namespace {
-struct TestTraitFolder : public PassWrapper<TestTraitFolder, FunctionPass> {
+struct TestTraitFolder
+    : public PassWrapper<TestTraitFolder, SymbolDefinitionPass<FuncOp>> {
   StringRef getArgument() const final { return "test-trait-folder"; }
   StringRef getDescription() const final { return "Run trait folding"; }
-  void runOnFunction() override {
-    (void)applyPatternsAndFoldGreedily(getFunction(),
+  void runOnSymbol() override {
+    (void)applyPatternsAndFoldGreedily(getOperation(),
                                        RewritePatternSet(&getContext()));
   }
 };

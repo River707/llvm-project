@@ -528,8 +528,8 @@ struct LinalgTilingPass : public LinalgTilingBase<LinalgTilingPass> {
         distributionTypes, [](StringRef ref) { return ref.str(); }));
   }
 
-  void runOnFunction() override {
-    FuncOp funcOp = getFunction();
+  void runOnSymbol() override {
+    FuncOp funcOp = getOperation();
     LinalgTilingLoopType type =
         llvm::StringSwitch<LinalgTilingLoopType>(loopType)
             .Case("for", LinalgTilingLoopType::Loops)

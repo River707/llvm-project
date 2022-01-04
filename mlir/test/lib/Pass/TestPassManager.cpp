@@ -21,14 +21,16 @@ struct TestModulePass
     return "Test a module pass in the pass manager";
   }
 };
-struct TestFunctionPass : public PassWrapper<TestFunctionPass, FunctionPass> {
-  void runOnFunction() final {}
+struct TestFunctionPass
+    : public PassWrapper<TestFunctionPass, SymbolDefinitionPass<FuncOp>> {
+  void runOnSymbol() final {}
   StringRef getArgument() const final { return "test-function-pass"; }
   StringRef getDescription() const final {
     return "Test a function pass in the pass manager";
   }
 };
-class TestOptionsPass : public PassWrapper<TestOptionsPass, FunctionPass> {
+class TestOptionsPass
+    : public PassWrapper<TestOptionsPass, SymbolDefinitionPass<FuncOp>> {
 public:
   struct Options : public PassPipelineOptions<Options> {
     ListOption<int> listOption{*this, "list",
@@ -48,7 +50,7 @@ public:
     stringListOption = options.stringListOption;
   }
 
-  void runOnFunction() final {}
+  void runOnSymbol() final {}
   StringRef getArgument() const final { return "test-options-pass"; }
   StringRef getDescription() const final {
     return "Test options parsing capabilities";

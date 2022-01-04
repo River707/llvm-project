@@ -11,14 +11,14 @@
 
 include "mlir/Pass/PassBase.td"
 
-def QuantConvertConst : FunctionPass<"quant-convert-const"> {
+def QuantConvertConst : SymbolDefPass<"quant-convert-const", "FuncOp"> {
   let summary = "Converts constants followed by qbarrier to actual quantized "
                 "values";
   let constructor = "mlir::quant::createConvertConstPass()";
 }
 
 def QuantConvertSimulatedQuant
-    : FunctionPass<"quant-convert-simulated-quantization"> {
+    : SymbolDefPass<"quant-convert-simulated-quantization", "FuncOp"> {
   let summary = "Converts training-time simulated quantization ops to "
                 "corresponding quantize/dequantize casts";
   let constructor = "mlir::quant::createConvertSimulatedQuantPass()";

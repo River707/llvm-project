@@ -638,9 +638,9 @@ struct BufferDeallocationPass : BufferDeallocationBase<BufferDeallocationPass> {
     registry.addOpInterface<memref::AllocOp, DefaultAllocationInterface>();
   }
 
-  void runOnFunction() override {
+  void runOnSymbol() override {
     // Ensure that there are supported loops only.
-    FuncOp func = getFunction();
+    FuncOp func = getOperation();
     Backedges backedges(func);
     if (backedges.size()) {
       func.emitError("Only structured control-flow loops are supported.");

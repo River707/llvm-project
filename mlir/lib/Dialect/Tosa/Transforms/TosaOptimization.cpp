@@ -213,10 +213,11 @@ struct DepthwiseConv2DIsMul : public OpRewritePattern<tosa::DepthwiseConv2DOp> {
   }
 };
 
-class TosaOptimization : public PassWrapper<TosaOptimization, FunctionPass> {
+class TosaOptimization
+    : public PassWrapper<TosaOptimization, SymbolDefinitionPass<FuncOp>> {
 public:
   explicit TosaOptimization() = default;
-  void runOnFunction() override;
+  void runOnSymbol() override;
 
   StringRef getArgument() const final { return PASS_NAME; }
   StringRef getDescription() const final {
@@ -224,13 +225,13 @@ public:
   }
 };
 
-void TosaOptimization::runOnFunction() {
+void TosaOptimization::runOnSymbol() {
   OwningRewritePatternList patterns(&getContext());
 
   patterns.insert<Conv2DIsFullyConnected>(&getContext());
   patterns.insert<DepthwiseConv2DIsMul>(&getContext());
 
-  auto func = getFunction();
+  auto func = getOperation();
   if (applyPatternsAndFoldGreedily(func, std::move(patterns)).failed()) {
     signalPassFailure();
   }

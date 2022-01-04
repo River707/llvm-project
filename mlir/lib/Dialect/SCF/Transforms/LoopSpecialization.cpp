@@ -237,22 +237,22 @@ struct ForLoopPeelingPattern : public OpRewritePattern<ForOp> {
 namespace {
 struct ParallelLoopSpecialization
     : public SCFParallelLoopSpecializationBase<ParallelLoopSpecialization> {
-  void runOnFunction() override {
-    getFunction().walk(
+  void runOnSymbol() override {
+    getOperation().walk(
         [](ParallelOp op) { specializeParallelLoopForUnrolling(op); });
   }
 };
 
 struct ForLoopSpecialization
     : public SCFForLoopSpecializationBase<ForLoopSpecialization> {
-  void runOnFunction() override {
-    getFunction().walk([](ForOp op) { specializeForLoopForUnrolling(op); });
+  void runOnSymbol() override {
+    getOperation().walk([](ForOp op) { specializeForLoopForUnrolling(op); });
   }
 };
 
 struct ForLoopPeeling : public SCFForLoopPeelingBase<ForLoopPeeling> {
-  void runOnFunction() override {
-    FuncOp funcOp = getFunction();
+  void runOnSymbol() override {
+    FuncOp funcOp = getOperation();
     MLIRContext *ctx = funcOp.getContext();
     RewritePatternSet patterns(ctx);
     patterns.add<ForLoopPeelingPattern>(ctx, skipPartial);

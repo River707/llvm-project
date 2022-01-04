@@ -19,7 +19,8 @@ using namespace mlir;
 namespace {
 
 struct TestNumberOfBlockExecutionsPass
-    : public PassWrapper<TestNumberOfBlockExecutionsPass, FunctionPass> {
+    : public PassWrapper<TestNumberOfBlockExecutionsPass,
+                         SymbolDefinitionPass<FuncOp>> {
   StringRef getArgument() const final {
     return "test-print-number-of-block-executions";
   }
@@ -28,15 +29,17 @@ struct TestNumberOfBlockExecutionsPass
            "for "
            "all blocks.";
   }
-  void runOnFunction() override {
-    llvm::errs() << "Number of executions: " << getFunction().getName() << "\n";
+  void runOnSymbol() override {
+    llvm::errs() << "Number of executions: " << getOperation().getName()
+                 << "\n";
     getAnalysis<NumberOfExecutions>().printBlockExecutions(
-        llvm::errs(), &getFunction().getBody());
+        llvm::errs(), &getOperation().getBody());
   }
 };
 
 struct TestNumberOfOperationExecutionsPass
-    : public PassWrapper<TestNumberOfOperationExecutionsPass, FunctionPass> {
+    : public PassWrapper<TestNumberOfOperationExecutionsPass,
+                         SymbolDefinitionPass<FuncOp>> {
   StringRef getArgument() const final {
     return "test-print-number-of-operation-executions";
   }
@@ -45,10 +48,11 @@ struct TestNumberOfOperationExecutionsPass
            "for "
            "all operations.";
   }
-  void runOnFunction() override {
-    llvm::errs() << "Number of executions: " << getFunction().getName() << "\n";
+  void runOnSymbol() override {
+    llvm::errs() << "Number of executions: " << getOperation().getName()
+                 << "\n";
     getAnalysis<NumberOfExecutions>().printOperationExecutions(
-        llvm::errs(), &getFunction().getBody());
+        llvm::errs(), &getOperation().getBody());
   }
 };
 

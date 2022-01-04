@@ -15,8 +15,9 @@ using namespace mlir;
 
 namespace {
 /// This is a test pass for verifying matchers.
-struct TestMatchers : public PassWrapper<TestMatchers, FunctionPass> {
-  void runOnFunction() override;
+struct TestMatchers
+    : public PassWrapper<TestMatchers, SymbolDefinitionPass<FuncOp>> {
+  void runOnSymbol() override;
   StringRef getArgument() const final { return "test-matchers"; }
   StringRef getDescription() const final {
     return "Test C++ pattern matchers.";
@@ -144,8 +145,8 @@ void test2(FuncOp f) {
     llvm::outs() << "Pattern add(add(a, constant), a) matched\n";
 }
 
-void TestMatchers::runOnFunction() {
-  auto f = getFunction();
+void TestMatchers::runOnSymbol() {
+  auto f = getOperation();
   llvm::outs() << f.getName() << "\n";
   if (f.getName() == "test1")
     test1(f);

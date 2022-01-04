@@ -29,7 +29,8 @@ using namespace mlir::linalg;
 
 namespace {
 struct TestLinalgCodegenStrategy
-    : public PassWrapper<TestLinalgCodegenStrategy, FunctionPass> {
+    : public PassWrapper<TestLinalgCodegenStrategy,
+                         SymbolDefinitionPass<FuncOp>> {
   StringRef getArgument() const final { return "test-linalg-codegen-strategy"; }
   StringRef getDescription() const final {
     return "Test Linalg Codegen Strategy.";
@@ -53,7 +54,7 @@ struct TestLinalgCodegenStrategy
   template <typename LinalgNamedOp>
   void applyStrategyToNamedLinalgOp();
 
-  void runOnFunction() override;
+  void runOnSymbol() override;
 
   void runStrategy(LinalgTilingAndFusionOptions tilingAndFusionOptions,
                    LinalgTilingOptions tilingOptions,
@@ -208,7 +209,7 @@ void TestLinalgCodegenStrategy::runStrategy(
               .enableContractionLowering()
               .enableTransferToSCFConversion());
   // Created a nested OpPassManager and run.
-  FuncOp funcOp = getFunction();
+  FuncOp funcOp = getOperation();
   OpPassManager dynamicPM("builtin.func");
   strategy.configurePassPipeline(dynamicPM, funcOp.getContext(), runEnablePass);
   if (failed(runPipeline(dynamicPM, funcOp)))
@@ -225,8 +226,8 @@ static Value getNeutralOfLinalgOp(OpBuilder &b, OpOperand &op) {
 }
 
 /// Apply transformations specified as patterns.
-void TestLinalgCodegenStrategy::runOnFunction() {
-  if (!anchorFuncOpName.empty() && anchorFuncOpName != getFunction().getName())
+void TestLinalgCodegenStrategy::runOnSymbol() {
+  if (!anchorFuncOpName.empty() && anchorFuncOpName != getOperation().getName())
     return;
 
   LinalgTilingAndFusionOptions tilingAndFusionOptions;

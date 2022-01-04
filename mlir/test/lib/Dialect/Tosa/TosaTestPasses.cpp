@@ -179,18 +179,18 @@ ConvertTosaConv2DOp::matchAndRewrite(Operation *op,
 namespace {
 
 struct TosaTestQuantUtilAPI
-    : public PassWrapper<TosaTestQuantUtilAPI, FunctionPass> {
+    : public PassWrapper<TosaTestQuantUtilAPI, SymbolDefinitionPass<FuncOp>> {
   StringRef getArgument() const final { return PASS_NAME; }
   StringRef getDescription() const final {
     return "TOSA Test: Exercise the APIs in QuantUtils.cpp.";
   }
-  void runOnFunction() override;
+  void runOnSymbol() override;
 };
 
-void TosaTestQuantUtilAPI::runOnFunction() {
+void TosaTestQuantUtilAPI::runOnSymbol() {
   auto *ctx = &getContext();
   RewritePatternSet patterns(ctx);
-  auto func = getFunction();
+  auto func = getOperation();
 
   patterns.add<ConvertTosaNegateOp>(ctx);
   patterns.add<ConvertTosaConv2DOp>(ctx);

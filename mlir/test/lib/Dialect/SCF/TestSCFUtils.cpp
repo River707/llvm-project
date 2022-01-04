@@ -27,14 +27,14 @@ using namespace mlir;
 
 namespace {
 class TestSCFForUtilsPass
-    : public PassWrapper<TestSCFForUtilsPass, FunctionPass> {
+    : public PassWrapper<TestSCFForUtilsPass, SymbolDefinitionPass<FuncOp>> {
 public:
   StringRef getArgument() const final { return "test-scf-for-utils"; }
   StringRef getDescription() const final { return "test scf.for utils"; }
   explicit TestSCFForUtilsPass() = default;
 
-  void runOnFunction() override {
-    FuncOp func = getFunction();
+  void runOnSymbol() override {
+    FuncOp func = getOperation();
     SmallVector<scf::ForOp, 4> toErase;
 
     func.walk([&](Operation *fakeRead) {
@@ -59,15 +59,15 @@ public:
 };
 
 class TestSCFIfUtilsPass
-    : public PassWrapper<TestSCFIfUtilsPass, FunctionPass> {
+    : public PassWrapper<TestSCFIfUtilsPass, SymbolDefinitionPass<FuncOp>> {
 public:
   StringRef getArgument() const final { return "test-scf-if-utils"; }
   StringRef getDescription() const final { return "test scf.if utils"; }
   explicit TestSCFIfUtilsPass() = default;
 
-  void runOnFunction() override {
+  void runOnSymbol() override {
     int count = 0;
-    FuncOp func = getFunction();
+    FuncOp func = getOperation();
     func.walk([&](scf::IfOp ifOp) {
       auto strCount = std::to_string(count++);
       FuncOp thenFn, elseFn;
@@ -87,7 +87,7 @@ static const StringLiteral kTestPipeliningOpOrderMarker =
     "__test_pipelining_op_order__";
 
 class TestSCFPipeliningPass
-    : public PassWrapper<TestSCFPipeliningPass, FunctionPass> {
+    : public PassWrapper<TestSCFPipeliningPass, SymbolDefinitionPass<FuncOp>> {
 public:
   StringRef getArgument() const final { return "test-scf-pipelining"; }
   StringRef getDescription() const final { return "test scf.forOp pipelining"; }
@@ -115,14 +115,14 @@ public:
     registry.insert<arith::ArithmeticDialect, StandardOpsDialect>();
   }
 
-  void runOnFunction() override {
+  void runOnSymbol() override {
     RewritePatternSet patterns(&getContext());
     mlir::scf::PipeliningOption options;
     options.getScheduleFn = getSchedule;
 
     scf::populateSCFLoopPipeliningPatterns(patterns, options);
-    (void)applyPatternsAndFoldGreedily(getFunction(), std::move(patterns));
-    getFunction().walk([](Operation *op) {
+    (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns));
+    getOperation().walk([](Operation *op) {
       // Clean up the markers.
       op->removeAttr(kTestPipeliningStageMarker);
       op->removeAttr(kTestPipeliningOpOrderMarker);

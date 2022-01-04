@@ -374,8 +374,8 @@ public:
 struct TosaDecomposeTransposeConv
     : public TosaDecomposeTransposeConvBase<TosaDecomposeTransposeConv> {
 public:
-  void runOnFunction() override {
-    auto func = getFunction();
+  void runOnSymbol() override {
+    auto func = getOperation();
     RewritePatternSet patterns(func.getContext());
     patterns
         .insert<TransposeConvDilatedConverter, TransposeConvStridedConverter>(

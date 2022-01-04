@@ -21,12 +21,13 @@ using namespace mlir;
 
 namespace {
 struct TestAffineLoopParametricTiling
-    : public PassWrapper<TestAffineLoopParametricTiling, FunctionPass> {
+    : public PassWrapper<TestAffineLoopParametricTiling,
+                         SymbolDefinitionPass<FuncOp>> {
   StringRef getArgument() const final { return "test-affine-parametric-tile"; }
   StringRef getDescription() const final {
     return "Tile affine loops using SSA values as tile sizes";
   }
-  void runOnFunction() override;
+  void runOnSymbol() override;
 };
 } // namespace
 
@@ -61,10 +62,10 @@ static void getTilingParameters(ArrayRef<AffineForOp> band,
   }
 }
 
-void TestAffineLoopParametricTiling::runOnFunction() {
+void TestAffineLoopParametricTiling::runOnSymbol() {
   // Bands of loops to tile.
   std::vector<SmallVector<AffineForOp, 6>> bands;
-  getTileableBands(getFunction(), &bands);
+  getTileableBands(getOperation(), &bands);
 
   // Tile each band.
   for (SmallVectorImpl<AffineForOp> &band : bands) {

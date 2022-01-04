@@ -92,6 +92,12 @@ class PassBase<string passArg, string base> {
 class Pass<string passArg, string operation = "">
   : PassBase<passArg, "::mlir::OperationPass<" # operation # ">">;
 
+// This class represents an mlir::SymbolDefinitionPass.
+class SymbolDefPass<string passArg, string operation>
+  : PassBase<passArg, "::mlir::SymbolDefinitionPass<" # operation # ">">;
+
+/// NOTICE: This class is deprecated in favor of `SymbolDefPass<..., "mlir::FuncOp">`
+/// and will be removed soon.
 // This class represents an mlir::FunctionPass.
 class FunctionPass<string passArg> : PassBase<passArg, "::mlir::FunctionPass">;
 

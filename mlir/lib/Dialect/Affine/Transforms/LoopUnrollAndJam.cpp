@@ -59,7 +59,7 @@ struct LoopUnrollAndJam : public AffineLoopUnrollAndJamBase<LoopUnrollAndJam> {
       this->unrollJamFactor = *unrollJamFactor;
   }
 
-  void runOnFunction() override;
+  void runOnSymbol() override;
 };
 } // namespace
 
@@ -69,11 +69,11 @@ mlir::createLoopUnrollAndJamPass(int unrollJamFactor) {
       unrollJamFactor == -1 ? None : Optional<unsigned>(unrollJamFactor));
 }
 
-void LoopUnrollAndJam::runOnFunction() {
+void LoopUnrollAndJam::runOnSymbol() {
   // Currently, just the outermost loop from the first loop nest is
   // unroll-and-jammed by this pass. However, runOnAffineForOp can be called on
   // any for operation.
-  auto &entryBlock = getFunction().front();
+  auto &entryBlock = getOperation().front();
   if (auto forOp = dyn_cast<AffineForOp>(entryBlock.front()))
     (void)loopUnrollJamByFactor(forOp, unrollJamFactor);
 }
