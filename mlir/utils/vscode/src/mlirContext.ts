@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as vscodelc from 'vscode-languageclient';
+import * as fs from 'fs';
 
 import * as config from './config';
 import * as configWatcher from './configWatcher';
@@ -11,16 +12,52 @@ import * as configWatcher from './configWatcher';
 export class MLIRContext implements vscode.Disposable {
   subscriptions: vscode.Disposable[] = [];
   client!: vscodelc.LanguageClient;
+  pdllClient!: vscodelc.LanguageClient;
 
   /**
-   *  Activate the MLIR context, and start the language client.
+   *  Activate the MLIR context, and start the language clients.
    */
   async activate(outputChannel: vscode.OutputChannel) {
-    // Get the path of the mlir-lsp-server that is used to provide language
+    // Create the language clients for mlir and pdll.
+    this.pdllClient =
+      this.startLanguageClient(outputChannel, 'pdll_server_path', 'pdll');
+    this.client =
+      this.startLanguageClient(outputChannel, 'server_path', 'mlir');
+
+    // Watch for configuration changes.
+    configWatcher.activate(this);
+  }
+
+  /**
+   *  Start a new language client for the given language.
+   */
+  startLanguageClient(outputChannel: vscode.OutputChannel,
+    serverSettingName: string,
+    languageName: string): vscodelc.LanguageClient {
+    const clientTitle = languageName.toUpperCase() + ' Language Client';
+
+    // Get the path of the lsp-server that is used to provide language
     // functionality.
-    const userDefinedServerPath = config.get<string>('server_path');
-    const serverPath = (userDefinedServerPath === '') ? 'mlir-lsp-server'
-                                                      : userDefinedServerPath;
+    const userDefinedServerPath = config.get<string>(serverSettingName);
+    const serverPath = (userDefinedServerPath === '')
+      ? languageName + "-lsp-server"
+      : userDefinedServerPath;
+
+    // Check that the file actually exists.
+    if (!fs.existsSync(serverPath)) {
+      vscode.window.showErrorMessage(
+        `${clientTitle}: Unable to resolve path for '${serverSettingName}', please ensure the path is correct`, "Open Setting").then(
+          (value) => {
+            if (value === "Open Setting") {
+              vscode.commands.executeCommand('workbench.action.openWorkspaceSettings', {
+                openToSide: false,
+                query: `mlir.${serverSettingName}`
+              });
+            }
+          }
+        );
+      return null;
+    }
 
     // Configure the server options.
     const serverOptions: vscodelc.ServerOptions = {
@@ -38,22 +75,21 @@ export class MLIRContext implements vscode.Disposable {
 
     // Configure the client options.
     const clientOptions: vscodelc.LanguageClientOptions = {
-      documentSelector : [ {scheme : 'file', language : 'mlir'} ],
+      documentSelector: [{ scheme: 'file', language: languageName }],
       synchronize : {
-        // Notify the server about file changes to *.mlir files contained in the
+        // Notify the server about file changes to language files contained in the
         // workspace.
-        fileEvents : vscode.workspace.createFileSystemWatcher('**/*.mlir')
+        fileEvents:
+          vscode.workspace.createFileSystemWatcher('**/*.' + languageName)
       },
       outputChannel : outputChannel,
     };
 
     // Create the language client and start the client.
-    this.client = new vscodelc.LanguageClient(
-        'mlir-lsp', 'MLIR Language Client', serverOptions, clientOptions);
-    this.subscriptions.push(this.client.start());
-
-    // Watch for configuration changes.
-    configWatcher.activate(this);
+    let languageClient = new vscodelc.LanguageClient(
+      languageName + '-lsp', clientTitle, serverOptions, clientOptions);
+    this.subscriptions.push(languageClient.start());
+    return languageClient;
   }
 
   dispose() {
