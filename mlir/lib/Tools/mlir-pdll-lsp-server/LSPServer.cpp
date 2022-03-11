@@ -64,6 +64,12 @@ struct LSPServer::Impl {
                         Callback<std::vector<DocumentSymbol>> reply);
 
   //===--------------------------------------------------------------------===//
+  // Code Completion
+
+  void onCompletion(const CompletionParams &params,
+                    Callback<CompletionList> reply);
+
+  //===--------------------------------------------------------------------===//
   // Fields
   //===--------------------------------------------------------------------===//
 
@@ -91,6 +97,15 @@ void LSPServer::Impl::onInitialize(const InitializeParams &params,
            {"openClose", true},
            {"change", (int)TextDocumentSyncKind::Full},
            {"save", true},
+       }},
+      {"completionProvider",
+       llvm::json::Object{
+           {"allCommitCharacters",
+            {" ", "\t", "(", ")", "[", "]", "{",  "}", "<",
+             ">", ":",  ";", ",", "+", "-", "/",  "*", "%",
+             "^", "&",  "#", "?", ".", "=", "\"", "'", "|"}},
+           {"resolveProvider", false},
+           {"triggerCharacters", {".", ">", "(", "{", ",", "<", ":", "[", " "}},
        }},
       {"definitionProvider", true},
       {"referencesProvider", true},
@@ -194,6 +209,14 @@ void LSPServer::Impl::onDocumentSymbol(
 }
 
 //===----------------------------------------------------------------------===//
+// Code Completion
+
+void LSPServer::Impl::onCompletion(const CompletionParams &params,
+                                   Callback<CompletionList> reply) {
+  reply(server.getCodeCompletion(params.textDocument.uri, params.position));
+}
+
+//===----------------------------------------------------------------------===//
 // LSPServer
 //===----------------------------------------------------------------------===//
 
@@ -229,6 +252,10 @@ LogicalResult LSPServer::run() {
   // Document Symbols
   messageHandler.method("textDocument/documentSymbol", impl.get(),
                         &Impl::onDocumentSymbol);
+
+  // Code Completion
+  messageHandler.method("textDocument/completion", impl.get(),
+                        &Impl::onCompletion);
 
   // Diagnostics
   impl->publishDiagnostics =
