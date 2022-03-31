@@ -50,6 +50,8 @@ struct EnabledPattern : public RewritePattern {
 };
 
 struct TestDialect : public Dialect {
+  DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestDialect)
+
   static StringRef getDialectNamespace() { return "test"; }
 
   TestDialect(MLIRContext *context)

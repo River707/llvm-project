@@ -24,6 +24,8 @@ using namespace mlir;
 namespace {
 struct TestMathPolynomialApproximationPass
     : public PassWrapper<TestMathPolynomialApproximationPass, OperationPass<>> {
+  DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestMathPolynomialApproximationPass)
+
   TestMathPolynomialApproximationPass() = default;
   TestMathPolynomialApproximationPass(
       const TestMathPolynomialApproximationPass &pass)

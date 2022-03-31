@@ -31,6 +31,8 @@ namespace {
 class OpenMPAllocaStackFrame
     : public LLVM::ModuleTranslation::StackFrameBase<OpenMPAllocaStackFrame> {
 public:
+  DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(OpenMPAllocaStackFrame)
+
   explicit OpenMPAllocaStackFrame(llvm::OpenMPIRBuilder::InsertPointTy allocaIP)
       : allocaInsertPoint(allocaIP) {}
   llvm::OpenMPIRBuilder::InsertPointTy allocaInsertPoint;
@@ -42,6 +44,8 @@ class OpenMPVarMappingStackFrame
     : public LLVM::ModuleTranslation::StackFrameBase<
           OpenMPVarMappingStackFrame> {
 public:
+  DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(OpenMPVarMappingStackFrame)
+
   explicit OpenMPVarMappingStackFrame(
       const DenseMap<Value, llvm::Value *> &mapping)
       : mapping(mapping) {}

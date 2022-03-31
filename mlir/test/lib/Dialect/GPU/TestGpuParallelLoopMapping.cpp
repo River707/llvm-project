@@ -19,9 +19,11 @@ using namespace mlir;
 namespace {
 /// Simple pass for testing the mapping of parallel loops to hardware ids using
 /// a greedy mapping strategy.
-class TestGpuGreedyParallelLoopMappingPass
+struct TestGpuGreedyParallelLoopMappingPass
     : public PassWrapper<TestGpuGreedyParallelLoopMappingPass,
                          OperationPass<>> {
+  DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestGpuGreedyParallelLoopMappingPass)
+
   StringRef getArgument() const final {
     return "test-gpu-greedy-parallel-loop-mapping";
   }

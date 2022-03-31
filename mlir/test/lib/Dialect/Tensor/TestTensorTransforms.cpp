@@ -22,6 +22,8 @@ using namespace mlir;
 namespace {
 struct TestTensorTransforms
     : public PassWrapper<TestTensorTransforms, OperationPass<>> {
+  DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTensorTransforms)
+
   TestTensorTransforms() = default;
   TestTensorTransforms(const TestTensorTransforms &pass) : PassWrapper(pass) {}
 
