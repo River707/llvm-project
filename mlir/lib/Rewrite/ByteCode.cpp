@@ -1224,10 +1224,8 @@ private:
   const void *readFromMemory() {
     size_t index = *curCodeIt++;
 
-    // If this type is an SSA value, it can only be stored in non-const memory.
-    if (llvm::is_one_of<T, Operation *, TypeRange *, ValueRange *,
-                        Value>::value ||
-        index < memory.size())
+    // First check if the value is stored in normal-memory.
+    if (index < memory.size())
       return memory[index];
 
     // Otherwise, if this index is not inbounds it is uniqued.
