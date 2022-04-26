@@ -378,6 +378,7 @@ private:
                                             StringRef name, SMRange loc);
   FailureOr<ast::OperationExpr *>
   createOperationExpr(SMRange loc, const ast::OpNameDecl *name,
+                      bool hasInferredResultTypes,
                       MutableArrayRef<ast::Expr *> operands,
                       MutableArrayRef<ast::NamedAttributeDecl *> attributes,
                       MutableArrayRef<ast::Expr *> results);
@@ -847,7 +848,8 @@ void Parser::processTdIncludeRecords(llvm::RecordKeeper &tdRecords,
     StringRef className = def->getValueAsString("cppClassName");
     StringRef cppNamespace = def->getValueAsString("cppNamespace");
     std::string codeBlock =
-        llvm::formatv("llvm::isa<{0}::{1}>(self)", cppNamespace, className)
+        llvm::formatv("return ::mlir::success(llvm::isa<{0}::{1}>(self));",
+                      cppNamespace, className)
             .str();
 
     if (def->isSubClassOf("OpInterface")) {
@@ -892,8 +894,9 @@ Parser::createODSNativePDLLConstraintDecl(const tblgen::Constraint &constraint,
   // Format the condition template.
   tblgen::FmtContext fmtContext;
   fmtContext.withSelf("self");
-  std::string codeBlock =
-      tblgen::tgfmt(constraint.getConditionTemplate(), &fmtContext);
+  std::string codeBlock = tblgen::tgfmt(
+      "return ::mlir::success(" + constraint.getConditionTemplate() + ");",
+      &fmtContext);
 
   return createODSNativePDLLConstraintDecl<ConstraintT>(
       constraint.getUniqueDefName(), codeBlock, loc, type);
@@ -1951,14 +1954,14 @@ FailureOr<ast::Expr *> Parser::parseOperationExpr() {
           ast::ValueRangeConstraintDecl::create(ctx, loc), valueRangeTy));
     }
   } else if (!consumeIf(Token::r_paren)) {
-    // Check for operand signature code completion.
-    if (curToken.is(Token::code_complete)) {
-      codeCompleteOperationOperandsSignature(opName, operands.size());
-      return failure();
-    }
-
     // If the operand list was specified and non-empty, parse the operands.
     do {
+      // Check for operand signature code completion.
+      if (curToken.is(Token::code_complete)) {
+        codeCompleteOperationOperandsSignature(opName, operands.size());
+        return failure();
+      }
+
       FailureOr<ast::Expr *> operand = parseExpr();
       if (failed(operand))
         return failure();
@@ -1988,6 +1991,7 @@ FailureOr<ast::Expr *> Parser::parseOperationExpr() {
 
   // Check for the optional list of result types.
   SmallVector<ast::Expr *> resultTypes;
+  bool hasInferredResultTypes = false;
   if (consumeIf(Token::arrow)) {
     if (failed(parseToken(Token::l_paren,
                           "expected `(` before operation result type list")))
@@ -2019,10 +2023,19 @@ FailureOr<ast::Expr *> Parser::parseOperationExpr() {
     // "unconstrained results".
     resultTypes.push_back(createImplicitRangeVar(
         ast::TypeRangeConstraintDecl::create(ctx, loc), typeRangeTy));
+  } else {
+    // If the result list isn't specified we try to infer them at runtime
+    // instead.
+    // TODO: We should warn when we know that an operation doesn't have the
+    // `InferTypeOpInterface` trait and when not used as the replacement value
+    // of a `replace` statement. This could also be an error, but technically
+    // the infer interface could be added to the operation at runtime, which
+    // wouldn't be visible to us even if we did have ODS information.
+    hasInferredResultTypes = true;
   }
 
-  return createOperationExpr(loc, *opNameDecl, operands, attributes,
-                             resultTypes);
+  return createOperationExpr(loc, *opNameDecl, hasInferredResultTypes, operands,
+                             attributes, resultTypes);
 }
 
 FailureOr<ast::Expr *> Parser::parseTupleExpr() {
@@ -2697,7 +2710,7 @@ FailureOr<ast::Type> Parser::validateMemberAccess(ast::Expr *parentExpr,
 }
 
 FailureOr<ast::OperationExpr *> Parser::createOperationExpr(
-    SMRange loc, const ast::OpNameDecl *name,
+    SMRange loc, const ast::OpNameDecl *name, bool hasInferredResultTypes,
     MutableArrayRef<ast::Expr *> operands,
     MutableArrayRef<ast::NamedAttributeDecl *> attributes,
     MutableArrayRef<ast::Expr *> results) {
@@ -2719,12 +2732,14 @@ FailureOr<ast::OperationExpr *> Parser::createOperationExpr(
     }
   }
 
-  // Verify the result types.
-  if (failed(validateOperationResults(loc, opNameRef, odsOp, results)))
-    return failure();
+  // Verify the result types if they aren't inferred.
+  if (!hasInferredResultTypes) {
+    if (failed(validateOperationResults(loc, opNameRef, odsOp, results)))
+      return failure();
+  }
 
-  return ast::OperationExpr::create(ctx, loc, name, operands, results,
-                                    attributes);
+  return ast::OperationExpr::create(ctx, loc, name, hasInferredResultTypes,
+                                    operands, results, attributes);
 }
 
 LogicalResult

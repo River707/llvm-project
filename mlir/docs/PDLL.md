@@ -577,9 +577,10 @@ let root = op<>;
 #### Operands
 
 The operands section corresponds to the operands of the operation. This section
-of an operation expression may be elided, in which case the operands are not
-constrained in any way. When present, the operands of an operation expression
-are interpreted in the following ways:
+of an operation expression may be elided, which within a `match` section means
+that the operands are not constrained in any way. If elided within a `rewrite`
+section, the operation is treated as having no operands. When present, the
+operands of an operation expression are interpreted in the following ways:
 
 1) A single instance of type `ValueRange`:
 
@@ -612,10 +613,11 @@ let root = op<my_dialect.indirect_call>(call: Value, args: ValueRange);
 
 #### Results
 
-The results section corresponds to the result types of the operation. This
-section of an operation expression may be elided, in which case the result types
-are not constrained in any way. When present, the result types of an operation
-expression are interpreted in the following ways:
+The results section corresponds to the result types of the operation. This section
+of an operation expression may be elided, which within a `match` section means
+that the result types are not constrained in any way. If elided within a `rewrite`
+section, the results of the operation are inferred. When present, the result
+types of an operation expression are interpreted in the following ways:
 
 1) A single instance of type `TypeRange`:
 
@@ -645,6 +647,42 @@ We can match the result types as so:
 ```pdll
 let root = op<my_dialect.op> -> (result: Type, otherResults: TypeRange);
 ```
+
+#### Inferred Results
+
+Within the `rewrite` section of a pattern, the results of an operation may
+be inferred when the result section is elided. Below is the set of situations
+in which the results of an operation may be inferred. In all other contexts, an
+operation expression with an elided results section is assumed to have zero
+results.
+
+##### Inferred Results of Replacement Operation
+
+Replacements have the invariant that the types of the replacement values must
+match the result types of the input operation. This means that when replacing
+one operation with another, the result types of the replacement operation may
+be inferred from the result types of the operation being replaced.
+For example, consider the following pattern:
+
+```pdll
+Pattern => replace op<dialect.inputOp> with op<dialect.outputOp>;
+```
+
+This pattern could be written in a more explicit way as:
+
+```pdll
+Pattern {
+  replace op<dialect.inputOp> -> (resultTypes: TypeRange)
+    with op<dialect.outputOp> -> (resultTypes);
+}
+```
+
+##### Inferred Results with InferTypeOpInterface
+
+`InferTypeOpInterface` is an interface that enables operations to infer the types
+of its results from its input attributes, operands, regions, etc. When the results
+section of an operation is elided and the operation implements `InferTypeOpInterface`,
+the methods on this interface are invoked to infer the result types of the operation. 
 
 #### Attributes
 
