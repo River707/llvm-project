@@ -1,0 +1,238 @@
+//===- ArithmeticPatterns.pdll - Arithmetic dialect patterns ---*- pdll -*-===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+/// PDLL TODO:
+// * Figure out design for locations
+// * vscode commands for showing intermediate PDL and C++
+//
+// * Hover for attribute names?
+// * Automatically grab documentation from constraints, patterns, and rewrites?
+// * Better generation for native methods
+//    - Use the new APIs.
+//    - Use the C++ class when possible (grab from ODS).
+//        * Attach constraints to Rewrite arguments and results?
+// * Discardable attributes should let you use `.` for the name.
+
+#include "mlir/Dialect/Arithmetic/IR/ArithmeticOps.td"
+
+/// Add two integer attributes and create a new one with the result.
+Rewrite AddIntAttrs(lhs: Attr, rhs: Attr) -> Attr [{
+ results.push_back(addIntegerAttrs(rewriter, lhs, rhs));
+}];
+
+/// Subtract two integer attributes and createa a new one with the result.
+Rewrite SubIntAttrs(lhs: Attr, rhs: Attr) -> Attr [{
+  results.push_back(subIntegerAttrs(rewriter, lhs, rhs));
+}];
+
+/// Build a arithmetic constant with the given attribute.
+Rewrite BuildConstant(value: Attr) => op<arith.constant> {value = value};
+
+//===----------------------------------------------------------------------===//
+// AddIOp
+//===----------------------------------------------------------------------===//
+
+// addi is commutative and will be canonicalized to have its constants appear
+// as the second operand.
+
+// addi(addi(x, c0), c1) -> addi(x, c0 + c1)
+Pattern AddIAddConstant {
+  replace op<arith.addi>(
+    op<arith.addi> (x: Value, op<arith.constant> {value = c0: Attr}),
+    op<arith.constant> {value = c1: Attr}
+  ) with op<arith.addi>(x, BuildConstant(AddIntAttrs(c0, c1)));
+}
+
+// addi(subi(x, c0), c1) -> addi(x, c1 - c0)
+Pattern AddISubConstantRHS {
+  replace op<arith.addi>(
+    op<arith.subi> (x: Value, op<arith.constant> {value = c0: APIntAttr}),
+    op<arith.constant> {value = c1: Attr}
+  ) with op<arith.addi>(x, BuildConstant(SubIntAttrs(c1, c0)));
+}
+
+// addi(subi(c0, x), c1) -> subi(c0 + c1, x)
+Pattern AddISubConstantLHS {
+  replace op<arith.addi>(
+    op<arith.subi>(op<arith.constant> {value = c0: Attr}, x: Value),
+    op<arith.constant> {value = c1: Attr}
+  ) with op<arith.subi>(BuildConstant(AddIntAttrs(c0, c1)), x);
+}
+
+//===----------------------------------------------------------------------===//
+// SubIOp
+//===----------------------------------------------------------------------===//
+
+// subi(addi(x, c0), c1) -> addi(x, c0 - c1)
+Pattern SubIRHSAddConstant {
+  replace op<arith.subi>(
+    op<arith.addi>(x: Value, op<arith.constant> {value = c0: Attr}),
+    op<arith.constant> {value = c1: Attr}
+  ) with op<arith.addi>(x, BuildConstant(SubIntAttrs(c0, c1)));
+}
+
+// subi(c1, addi(x, c0)) -> subi(c1 - c0, x)
+Pattern SubILHSAddConstant {
+  replace op<arith.subi>(
+    op<arith.constant> {value = c1: Attr},
+    op<arith.addi>(x: Value, op<arith.constant> {value = c0: Attr})
+  ) with op<arith.subi>(BuildConstant(SubIntAttrs(c1, c0)), x);
+}
+
+// subi(subi(x, c0), c1) -> subi(x, c0 + c1)
+Pattern SubIRHSSubConstantRHS {
+  replace op<arith.subi>(
+    op<arith.subi>(x: Value, op<arith.constant> {value = c0: Attr}),
+    op<arith.constant> {value = c1: Attr}
+  ) with op<arith.subi>(x, BuildConstant(AddIntAttrs(c0, c1)));
+}
+
+// subi(subi(c0, x), c1) -> subi(c0 - c1, x)
+Pattern SubIRHSSubConstantLHS {
+  replace op<arith.subi>(
+    op<arith.subi>(op<arith.constant> {value = c0: Attr}, x: Value),
+    op<arith.constant> {value = c1: Attr}
+  ) with op<arith.subi>(BuildConstant(SubIntAttrs(c0, c1)), x);
+}
+
+// subi(c1, subi(x, c0)) -> subi(c0 + c1, x)
+Pattern SubILHSSubConstantRHS {
+  replace op<arith.subi>(
+    op<arith.constant> {value = c1: Attr},
+    op<arith.subi>(x: Value, op<arith.constant> {value = c0: Attr})
+  ) with op<arith.subi>(BuildConstant(AddIntAttrs(c0, c1)), x);
+}
+
+// subi(c1, subi(c0, x)) -> addi(x, c1 - c0)
+Pattern SubILHSSubConstantLHS {
+  replace op<arith.subi>(
+    op<arith.constant> {value = c1: Attr},
+    op<arith.subi>(op<arith.constant> {value = c0: Attr}, x: Value)
+  ) with op<arith.addi>(BuildConstant(SubIntAttrs(c1, c0)), x);
+}
+
+//===----------------------------------------------------------------------===//
+// XOrIOp
+//===----------------------------------------------------------------------===//
+
+// xori is commutative and will be canonicalized to have its constants appear
+// as the second operand.
+
+Rewrite InvertPredicate(attr: Attr) -> Attr [{
+  results.push_back(invertPredicate(attr.cast<arith::CmpIPredicateAttr>()));
+}];
+
+// not(cmpi(pred, a, b)) -> cmpi(~pred, a, b), where not(x) is xori(x, 1)
+Pattern XOrINotCmpI {
+  replace op<arith.xori>(
+    op<arith.cmpi>(a: Value, b: Value) {predicate = pred: Attr},
+    op<arith.constant> {value = attr<"true">}
+  ) with op<arith.cmpi>(a, b) {predicate = InvertPredicate(pred)};
+}
+
+//===----------------------------------------------------------------------===//
+// CmpIOp
+//===----------------------------------------------------------------------===//
+
+Constraint IsEqOrNeCmp(attr: Arith_CmpIPredicateAttr) [{
+  auto cmpPredicate = attr.cast<arith::CmpIPredicateAttr>().getValue();
+  return success(cmpPredicate == arith::CmpIPredicate::eq ||
+                 cmpPredicate == arith::CmpIPredicate::ne);
+}];
+
+// cmpi(== or !=, a ext iNN, b ext iNN) == cmpi(== or !=, a, b)
+Pattern CmpIExtSI {
+  replace op<arith.cmpi>(
+    op<arith.extsi>(a: Value<type: Type>),
+    op<arith.extsi>(b: Value<type>)
+  ) {predicate = predAttr: IsEqOrNeCmp}
+    with op<arith.cmpi>(a, b) {predicate = predAttr};
+}
+
+// cmpi(== or !=, a ext iNN, b ext iNN) == cmpi(== or !=, a, b)
+Pattern CmpIExtUI {
+  replace op<arith.cmpi>(
+    op<arith.extui>(a: Value<type: Type>),
+    op<arith.extui>(b: Value<type>)
+  ) {predicate = predAttr: IsEqOrNeCmp}
+    with op<arith.cmpi>(a, b) {predicate = predAttr};
+}
+
+//===----------------------------------------------------------------------===//
+// IndexCastOp
+//===----------------------------------------------------------------------===//
+
+// index_cast(index_cast(x)) -> x, if dstType == srcType.
+Pattern IndexCastOfIndexCast {
+  replace op<arith.index_cast>(op<arith.index_cast>(x: Value<type: Type>)) -> (type)
+    with x;
+}
+
+// index_cast(extsi(x)) -> index_cast(x)
+Pattern IndexCastOfExtSI {
+  replace op<arith.index_cast>(op<arith.extsi>(x: Value))
+    with op<arith.index_cast>(x);
+}
+
+//===----------------------------------------------------------------------===//
+// BitcastOp
+//===----------------------------------------------------------------------===//
+
+// bitcast(bitcast(x)) -> x
+Pattern BitcastOfBitcast {
+  replace op<arith.bitcast>(op<arith.bitcast>(x: Value)) with x;
+}
+
+//===----------------------------------------------------------------------===//
+// ExtSIOp
+//===----------------------------------------------------------------------===//
+
+// extsi(extui(x iN : iM) : iL) -> extui(x : iL)
+Pattern ExtSIOfExtUI {
+  replace op<arith.extsi>(op<arith.extui>(x: Value)) with op<arith.extui>(x);
+}
+
+//===----------------------------------------------------------------------===//
+// AndIOp
+//===----------------------------------------------------------------------===//
+
+// and extui(x), extui(y) -> extui(and(x,y))
+Pattern AndOfExtUI {
+  replace op<arith.andi>(
+    op<arith.extui>(x: Value<type: Type>),
+    op<arith.extui>(y: Value<type>)
+  ) with op<arith.extui>(op<arith.andi>(x, y));
+}
+
+// and extsi(x), extsi(y) -> extsi(and(x,y))
+Pattern AndOfExtSI {
+  replace op<arith.andi>(
+    op<arith.extsi>(x: Value<type: Type>),
+    op<arith.extsi>(y: Value<type>)
+  ) with op<arith.extsi>(op<arith.andi>(x, y));
+}
+
+//===----------------------------------------------------------------------===//
+// OrIOp
+//===----------------------------------------------------------------------===//
+
+// or extui(x), extui(y) -> extui(or(x,y))
+Pattern OrOfExtUI {
+  replace op<arith.ori>(
+    op<arith.extui>(x: Value<type: Type>),
+    op<arith.extui>(y: Value<type>)
+  ) with op<arith.extui>(op<arith.ori>(x, y));
+}
+
+// or extsi(x), extsi(y) -> extsi(or(x,y))
+Pattern OrOfExtSI {
+  replace op<arith.ori>(
+    op<arith.extsi>(x: Value<type: Type>),
+    op<arith.extsi>(y: Value<type>)
+  ) with op<arith.extsi>(op<arith.ori>(x, y));
+}

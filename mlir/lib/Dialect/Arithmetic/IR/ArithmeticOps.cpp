@@ -15,6 +15,7 @@
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/Parser/Parser.h"
 #include "llvm/ADT/SmallString.h"
 
 #include "llvm/ADT/APSInt.h"
@@ -26,16 +27,16 @@ using namespace mlir::arith;
 // Pattern helpers
 //===----------------------------------------------------------------------===//
 
-static IntegerAttr addIntegerAttrs(PatternRewriter &builder, Value res,
-                                   Attribute lhs, Attribute rhs) {
-  return builder.getIntegerAttr(res.getType(),
+static IntegerAttr addIntegerAttrs(PatternRewriter &builder, Attribute lhs,
+                                   Attribute rhs) {
+  return builder.getIntegerAttr(lhs.getType(),
                                 lhs.cast<IntegerAttr>().getInt() +
                                     rhs.cast<IntegerAttr>().getInt());
 }
 
-static IntegerAttr subIntegerAttrs(PatternRewriter &builder, Value res,
-                                   Attribute lhs, Attribute rhs) {
-  return builder.getIntegerAttr(res.getType(),
+static IntegerAttr subIntegerAttrs(PatternRewriter &builder, Attribute lhs,
+                                   Attribute rhs) {
+  return builder.getIntegerAttr(lhs.getType(),
                                 lhs.cast<IntegerAttr>().getInt() -
                                     rhs.cast<IntegerAttr>().getInt());
 }

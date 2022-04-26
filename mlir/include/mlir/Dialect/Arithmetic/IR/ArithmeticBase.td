@@ -21,6 +21,7 @@ def Arithmetic_Dialect : Dialect {
     ops, bitwise and shift ops, cast ops, and compare ops. Operations in this
     dialect also accept vectors and tensors of integers or floats.
   }];
+  let dependentDialects = ["pdl::PDLDialect", "pdl_interp::PDLInterpDialect"];
 
   let hasConstantMaterializer = 1;
   let emitAccessorPrefix = kEmitAccessorPrefix_Prefixed;

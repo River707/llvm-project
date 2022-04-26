@@ -1,6 +1,7 @@
-set(LLVM_TARGET_DEFINITIONS ArithmeticCanonicalization.td)
-mlir_tablegen(ArithmeticCanonicalization.inc -gen-rewriters)
-add_public_tablegen_target(MLIRArithmeticCanonicalizationIncGen)
+add_mlir_pdll_library(MLIRArithmeticCanonicalizationIncGen
+  ArithmeticCanonicalization.pdll
+  ArithmeticCanonicalization.inc
+)
 
 add_mlir_dialect_library(MLIRArithmetic
   ArithmeticOps.cpp
@@ -16,4 +17,7 @@ add_mlir_dialect_library(MLIRArithmetic
   MLIRDialect
   MLIRInferTypeOpInterface
   MLIRIR
+  MLIRParser
+  MLIRPDL
+  MLIRPDLInterp
   )
